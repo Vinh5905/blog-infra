@@ -1,0 +1,17 @@
+# Local reference examples and AWS Console lab assets
+/docs/examples/
+/docs/manual-aws/
+
+# Terraform downloaded files
+.terraform/
+
+# Terraform state and saved plans
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Local input values and backend configuration
+*.tfvars
+!*.tfvars.example
+backend.hcl
