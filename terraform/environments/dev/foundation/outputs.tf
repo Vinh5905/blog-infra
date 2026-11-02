@@ -72,3 +72,13 @@ output "security_group_ids" {
     database      = aws_security_group.database.id
   }
 }
+
+output "instance_profile_names" {
+  description = "IAM instance profile names for BlogApp dev hosts"
+
+  value = {
+    automation    = aws_iam_instance_profile.automation.name
+    control_plane = aws_iam_instance_profile.control_plane.name
+    worker        = aws_iam_instance_profile.worker.name
+  }
+}
