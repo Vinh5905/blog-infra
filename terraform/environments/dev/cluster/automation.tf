@@ -32,6 +32,9 @@ module "automation" {
     delete_on_termination = true
   }
 
+  user_data                   = file("${path.module}/scripts/bootstrap-automation.sh")
+  user_data_replace_on_change = false
+
   tags = {
     Role = "automation"
   }
