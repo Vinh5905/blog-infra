@@ -12,7 +12,7 @@ Hiện trạng ngày **02/11/2026**: repo đã có bộ tài liệu thiết kế
 4. [GitOps, Argo CD, migration và observability](docs/03-gitops-dev.md).
 5. [Nghiệm thu, rollback, backup và vận hành](docs/04-nghiem-thu-va-van-hanh.md).
 
-Các tài liệu bổ trợ và code mẫu được giữ cùng trong `docs/`: [Terraform cho người mới](docs/terraform-cho-nguoi-moi.md), [bootstrap remote state từng bước](docs/01a-bootstrap-remote-state-tung-buoc.md), [foundation network từng bước](docs/01b-foundation-network-tung-buoc.md), [code mẫu network](docs/examples/foundation-network/README.md) và [bài lab AWS Console](docs/05-thuc-hanh-thu-cong-aws-console.md).
+Các tài liệu bổ trợ và code mẫu được giữ cùng trong `docs/`: [Terraform cho người mới](docs/terraform-cho-nguoi-moi.md), [code mẫu network](docs/examples/foundation-network/README.md) và [bài lab AWS Console](docs/05-thuc-hanh-thu-cong-aws-console.md).
 
 ## Ranh giới ba repo
 

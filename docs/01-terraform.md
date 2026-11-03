@@ -10,15 +10,16 @@ Provider `hashicorp/aws` là thành phần gọi AWS API. Resource như `aws_sec
 
 ### 1.1 Bộ module đã kiểm tra metadata ngày 18/10/2026
 
-| Mục đích | Source Registry | Version được kiểm tra | AWS provider tối thiểu theo metadata version đó |
-|---|---|---|---|
-| Network | `terraform-aws-modules/vpc/aws` | `6.7.3` | `6.28` |
-| EC2 cố định | `terraform-aws-modules/ec2-instance/aws` | `6.4.1` | `6.37` |
-| Worker ASG/LT | `terraform-aws-modules/autoscaling/aws` | `9.3.2` | `6.56` |
-| ALB và internal NLB | `terraform-aws-modules/alb/aws` | `10.5.1` | `6.28` |
-| RDS MySQL | `terraform-aws-modules/rds/aws` | `7.2.2` | `6.28` |
-| State/backup/telemetry buckets | `terraform-aws-modules/s3-bucket/aws` | `5.17.0` | `6.44` |
-| IAM hỗ trợ, khi phù hợp | `terraform-aws-modules/iam/aws` | `6.8.2` | Kiểm requirements của submodule cụ thể |
+
+| Mục đích                    | Source Registry                          | Version được kiểm tra | AWS provider tối thiểu theo metadata version đó |
+| -------------------------------- | ------------------------------------------ | --------------------------- | ----------------------------------------------------- |
+| Network                        | `terraform-aws-modules/vpc/aws`          | `6.7.3`                   | `6.28`                                              |
+| EC2 cố định                 | `terraform-aws-modules/ec2-instance/aws` | `6.4.1`                   | `6.37`                                              |
+| Worker ASG/LT                  | `terraform-aws-modules/autoscaling/aws`  | `9.3.2`                   | `6.56`                                              |
+| ALB và internal NLB           | `terraform-aws-modules/alb/aws`          | `10.5.1`                  | `6.28`                                              |
+| RDS MySQL                      | `terraform-aws-modules/rds/aws`          | `7.2.2`                   | `6.28`                                              |
+| State/backup/telemetry buckets | `terraform-aws-modules/s3-bucket/aws`    | `5.17.0`                  | `6.44`                                              |
+| IAM hỗ trợ, khi phù hợp    | `terraform-aws-modules/iam/aws`          | `6.8.2`                   | Kiểm requirements của submodule cụ thể          |
 
 Nguồn metadata: API công khai `https://registry.terraform.io/v1/modules/terraform-aws-modules/<module>/aws`, trường `version` và `root.provider_dependencies`. Bảng ghi version đã đọc, **chưa phải compatibility test của cả hệ thống**. Không tự thay module sang bản mới nhất mỗi lần init.
 
@@ -93,7 +94,7 @@ jq --version
 
 Mỗi lệnh chỉ báo công cụ cài được; chưa chứng minh account, quyền hay kết nối private API.
 
-Nếu tổ chức đã dùng IAM Identity Center, thiết lập profile SSO theo thông tin được cấp, sau đó kiểm tra đúng danh tính. Không bắt buộc bật Identity Center/Organizations chỉ để làm bài lab; với profile đăng nhập Console đã có từ `aws login`, dùng luồng trong [bài bootstrap từng bước](01a-bootstrap-remote-state-tung-buoc.md#2-kiểm-tra-danh-tính-và-công-cụ).
+Nếu tổ chức đã dùng IAM Identity Center, thiết lập profile SSO theo thông tin được cấp, sau đó kiểm tra đúng danh tính. Với profile đăng nhập Console, dùng `aws login` rồi kiểm tra danh tính theo lệnh bên dưới.
 
 ```bash
 aws configure sso --profile blogapp-dev
@@ -155,7 +156,7 @@ Không ignore `.terraform.lock.hcl`. Các mẫu `.tfvars.example` chỉ chứa t
 
 ### 4.1 Tại sao có vòng bootstrap
 
-Nếu mới học, đọc [bài thực hành bootstrap remote state từng bước](01a-bootstrap-remote-state-tung-buoc.md): giải thích state/backend, code bootstrap đầy đủ, local apply, migration sang S3 và kết quả cần kiểm tra. Bài dùng profile đăng nhập Console `aws login` của phiên làm việc hiện tại; không bắt buộc bật IAM Identity Center. Phần này bên dưới là bản tóm tắt thiết kế.
+Phần này tóm tắt thiết kế backend, các bước bootstrap và cách chuyển state lên S3.
 
 Backend S3 cần bucket đã tồn tại để `terraform init`. Vì vậy root `bootstrap/state` ban đầu dùng local state để tạo KMS/bucket, sau đó chuyển chính state bootstrap lên một key riêng. Không để bootstrap tự đòi dùng backend chưa tạo.
 
@@ -221,7 +222,7 @@ Ansible SSM dùng bucket tạm truyền module/file. Tạo bucket **riêng**, en
 
 ## 5. D2 — Network với module VPC
 
-Đọc [bài foundation network từng bước](01b-foundation-network-tung-buoc.md) để thực hành từ backend foundation tới code từng file, init/plan/apply và kiểm VPC/subnet/route/NAT trên AWS. Có [code mẫu đầy đủ cho riêng phần network](examples/foundation-network/README.md). Security groups ở mục 5.1 và các phần IAM/LB/RDS tiếp tục bổ sung vào cùng root foundation; không coi xong network là xong toàn bộ D2.
+Các security group và phần IAM, load balancer, RDS tiếp tục được bổ sung vào root foundation sau khi hoàn tất VPC, subnet và định tuyến.
 
 Ví dụ `foundation/network.tf`:
 
@@ -262,15 +263,16 @@ Ban đầu có thể đọc outputs foundation bằng `terraform_remote_state`. 
 
 ### 5.1 Security groups — tạo trước compute
 
-| SG | Inbound dự kiến |
-|---|---|
-| Public ALB | 443 từ Internet; 80 redirect |
-| API NLB | 6443 từ automation host/VPN được phép |
-| Control plane | 6443 qua NLB SG; etcd chỉ control plane; kubelet/cluster traffic theo topology |
-| Worker | 30080 từ ALB SG; kubelet 10250 từ control plane; node/CNI traffic cần thiết |
-| RDS | 3306 từ worker SG và automation/DB bootstrap SG |
-| Automation | Không inbound SSH public; quản qua SSM |
-| Interface endpoints | 443 từ SG của node/automation được phép |
+
+| SG                  | Inbound dự kiến                                                               |
+| --------------------- | --------------------------------------------------------------------------------- |
+| Public ALB          | 443 từ Internet; 80 redirect                                                   |
+| API NLB             | 6443 từ automation host/VPN được phép                                      |
+| Control plane       | 6443 qua NLB SG; etcd chỉ control plane; kubelet/cluster traffic theo topology |
+| Worker              | 30080 từ ALB SG; kubelet 10250 từ control plane; node/CNI traffic cần thiết |
+| RDS                 | 3306 từ worker SG và automation/DB bootstrap SG                               |
+| Automation          | Không inbound SSH public; quản qua SSM                                        |
+| Interface endpoints | 443 từ SG của node/automation được phép                                   |
 
 Calico VXLAN cần UDP 4789 giữa node; kubelet cần 10250 cho API/metrics-server theo nguồn được phép. Với pod CIDR không thuộc VPC, kiểm đường đi và SNAT thực tế trước chốt egress/SG; không suy diễn SG theo tên Service Kubernetes. NLB SG reference và health-check path phải được xét cùng client-IP preservation; kiểm bằng target health và packet flow.
 
@@ -291,12 +293,13 @@ resource "aws_vpc_security_group_ingress_rule" "alb_to_ingress" {
 
 ## 6. D2 — IAM: bốn loại danh tính khác nhau
 
-| Danh tính | Công việc | Không được đồng nhất với |
-|---|---|---|
-| Human SSO | Bootstrap, review và xử lý khẩn cấp | Credential hardcode trong pipeline |
-| GitHub OIDC role | Terraform plan/apply đúng repo/environment | Quyền mạng private hoặc Kubernetes RBAC |
-| EC2 instance profile | SSM và nhu cầu node thực sự | Mọi quyền S3/EBS/ASG của mọi pod |
-| Kubernetes workload role | CSI, CCM, Autoscaler, NTH, telemetry/backup theo SA | EKS Pod Identity tự có trên kubeadm |
+
+| Danh tính               | Công việc                                         | Không được đồng nhất với           |
+| -------------------------- | ----------------------------------------------------- | -------------------------------------------- |
+| Human SSO                | Bootstrap, review và xử lý khẩn cấp            | Credential hardcode trong pipeline         |
+| GitHub OIDC role         | Terraform plan/apply đúng repo/environment        | Quyền mạng private hoặc Kubernetes RBAC |
+| EC2 instance profile     | SSM và nhu cầu node thực sự                     | Mọi quyền S3/EBS/ASG của mọi pod       |
+| Kubernetes workload role | CSI, CCM, Autoscaler, NTH, telemetry/backup theo SA | EKS Pod Identity tự có trên kubeadm     |
 
 Root bootstrap tạo GitHub OIDC trust theo repo thật, audience `sts.amazonaws.com` và subject đúng workflow/environment. Nếu job dùng GitHub Environment, `sub` thường mang environment, khác subject branch; xác minh claim và policy theo [GitHub AWS OIDC](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws). Tách plan/apply role; untrusted PR chỉ static checks, không phát AWS credential. Apply dùng environment approval và commit đã review.
 

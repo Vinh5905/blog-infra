@@ -24,7 +24,7 @@ Trong các chương kiến trúc tổng quát 01–04, nhiều tên file `.tf`, 
 
 Tài liệu [Terraform cho người mới](terraform-cho-nguoi-moi.md) là phần bổ trợ về khái niệm Terraform. Bộ này đi vào quyết định riêng của BlogApp.
 
-Hai bài thực hành chi tiết để theo từng lệnh: [bootstrap remote state](01a-bootstrap-remote-state-tung-buoc.md), rồi [foundation network với module VPC](01b-foundation-network-tung-buoc.md). Bài network có [code mẫu](examples/foundation-network/README.md) để copy vào root foundation thật sau khi đọc hướng dẫn và đối chiếu account/AZ/backend.
+Phần bootstrap remote state và foundation network nằm trong [chương Terraform](01-terraform.md).
 
 ## 2. Đã đọc những gì, nguồn nào có ưu tiên
 
