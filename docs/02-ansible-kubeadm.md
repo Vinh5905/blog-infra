@@ -49,6 +49,8 @@ Lệnh đầu kiểm danh sách managed instances và `PingStatus`; lệnh sau m
 
 ### 3.1 Chuẩn bị dependency Python/collection
 
+Các lệnh cài công cụ và kích hoạt lại virtualenv nằm trong [runbook chuẩn bị automation host](runbooks/01-automation-host.md).
+
 Sau khi có `ansible/requirements-controller.txt` và `ansible/requirements.yml` đã pin/review:
 
 ```bash
