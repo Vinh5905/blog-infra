@@ -36,3 +36,13 @@ variable "app_domain_name" {
   description = "Public DNS hostname for the BlogApp dev environment"
   type        = string
 }
+
+variable "mysql_engine_version" {
+  description = "RDS MySQL engine version for BlogApp dev"
+  type        = string
+}
+
+variable "db_instance_class" {
+  description = "RDS instance class for BlogApp dev"
+  type        = string
+}

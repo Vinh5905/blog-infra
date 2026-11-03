@@ -125,3 +125,23 @@ output "app_certificate_dns_validation_records" {
     }
   }
 }
+
+output "kube_api_endpoint" {
+  description = "Private Kubernetes API endpoint for kubeadm"
+  value       = "${aws_route53_record.kube_api.fqdn}:6443"
+}
+
+output "database_address" {
+  description = "RDS MySQL hostname"
+  value       = module.database.db_instance_address
+}
+
+output "database_port" {
+  description = "RDS MySQL port"
+  value       = module.database.db_instance_port
+}
+
+output "database_master_secret_arn" {
+  description = "ARN of the RDS-managed master credentials secret"
+  value       = module.database.db_instance_master_user_secret_arn
+}
