@@ -92,3 +92,36 @@ output "ssm_transfer_kms_key_arn" {
   description = "KMS key ARN used to encrypt Ansible transfer files"
   value       = aws_kms_key.ssm_transfer.arn
 }
+
+output "api_nlb_dns_name" {
+  description = "DNS name of the internal Kubernetes API NLB"
+  value       = module.api_nlb.dns_name
+}
+
+output "api_nlb_target_group_arn" {
+  description = "Target group ARN for registering Kubernetes control plane instances"
+  value       = module.api_nlb.target_groups["kube_api"].arn
+}
+
+output "app_alb_dns_name" {
+  description = "Public DNS name of the BlogApp ALB"
+  value       = module.edge.dns_name
+}
+
+output "app_alb_target_group_arn" {
+  description = "Target group ARN for the worker ASG"
+  value       = module.edge.target_groups["traefik"].arn
+}
+
+output "app_certificate_dns_validation_records" {
+  description = "DNS records required to validate the BlogApp dev certificate"
+
+  value = {
+    for option in aws_acm_certificate.app.domain_validation_options :
+    option.domain_name => {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }
+  }
+}

@@ -31,3 +31,8 @@ variable "availability_zones" {
     error_message = "Choose exactly two distinct Availability Zones."
   }
 }
+
+variable "app_domain_name" {
+  description = "Public DNS hostname for the BlogApp dev environment"
+  type        = string
+}
