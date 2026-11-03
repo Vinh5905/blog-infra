@@ -1,0 +1,23 @@
+---
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - ap-southeast-1
+
+filters:
+  instance-state-name: running
+  "tag:Project": blogapp
+  "tag:Environment": dev
+  "tag:Cluster": blogapp-dev
+  "tag:Role":
+    - control-plane
+    - worker
+
+hostnames:
+  - instance-id
+
+keyed_groups:
+  - key: ec2_tags.Role
+    prefix: role
+
+strict: true
