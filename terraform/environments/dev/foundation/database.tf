@@ -43,7 +43,7 @@ module "database" {
   parameters = [
     {
       name         = "require_secure_transport"
-      value        = "ON"
+      value        = "1"
       apply_method = "immediate"
     }
   ]
