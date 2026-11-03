@@ -82,3 +82,13 @@ output "instance_profile_names" {
     worker        = aws_iam_instance_profile.worker.name
   }
 }
+
+output "ssm_transfer_bucket_name" {
+  description = "S3 bucket used by Ansible for SSM file transfers"
+  value       = module.ssm_transfer_bucket.s3_bucket_id
+}
+
+output "ssm_transfer_kms_key_arn" {
+  description = "KMS key ARN used to encrypt Ansible transfer files"
+  value       = aws_kms_key.ssm_transfer.arn
+}
