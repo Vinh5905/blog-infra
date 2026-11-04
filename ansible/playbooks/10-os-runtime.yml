@@ -1,0 +1,15 @@
+---
+- name: Prepare dev Kubernetes control plane
+  hosts: role_control_plane
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Verify Ubuntu version and CPU architecture
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] == '24.04'
+          - ansible_facts['architecture'] == 'x86_64'
+        fail_msg: "Expected Ubuntu 24.04 on x86_64."
+        success_msg: "Control plane matches the expected OS and architecture."
