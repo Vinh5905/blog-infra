@@ -153,6 +153,103 @@
           ansible.builtin.debug:
             var: containerd_plugins.stdout_lines
 
+    - name: Download pinned crictl archive
+      ansible.builtin.get_url:
+        url: "https://github.com/kubernetes-sigs/cri-tools/releases/download/{{ crictl_version }}/crictl-{{ crictl_version }}-linux-amd64.tar.gz"
+        dest: "/var/cache/crictl-{{ crictl_version }}-linux-amd64.tar.gz"
+        checksum: "sha256:{{ crictl_sha256 }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install crictl binary
+      ansible.builtin.unarchive:
+        src: "/var/cache/crictl-{{ crictl_version }}-linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure crictl endpoints
+      ansible.builtin.copy:
+        dest: /etc/crictl.yaml
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          runtime-endpoint: unix:///run/containerd/containerd.sock
+          image-endpoint: unix:///run/containerd/containerd.sock
+          timeout: 10
+          debug: false
+
+    - name: Check containerd through CRI
+      when: not ansible_check_mode
+      block:
+        - name: Read CRI runtime information
+          ansible.builtin.command:
+            cmd: /usr/local/bin/crictl --config /etc/crictl.yaml info --output json
+          register: cri_info
+          changed_when: false
+
+        - name: Verify CRI runtime is ready
+          ansible.builtin.assert:
+            that:
+              - >-
+                ((cri_info.stdout | from_json)['status']['conditions']
+                | selectattr('type', 'equalto', 'RuntimeReady')
+                | map(attribute='status')
+                | list) == [true]
+            fail_msg: "Containerd CRI does not report RuntimeReady=true."
+            success_msg: "Containerd CRI reports RuntimeReady=true."
+
+        - name: Display CRI runtime conditions
+          ansible.builtin.debug:
+            msg: "{{ (cri_info.stdout | from_json)['status']['conditions'] }}"
+
+    - name: Ensure APT keyring directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Download Kubernetes repository signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes.asc
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Configure Kubernetes APT repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          deb [signed-by=/etc/apt/keyrings/kubernetes.asc] https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor }}/deb/ /
+
+    - name: Refresh package lists including Kubernetes repository
+      ansible.builtin.apt:
+        update_cache: true
+        lock_timeout: 120
+
+    - name: Inspect available Kubernetes package versions
+      when: not ansible_check_mode
+      block:
+        - name: Read Kubernetes package candidates
+          ansible.builtin.command:
+            cmd: apt-cache policy kubeadm kubelet kubectl
+          register: kubernetes_package_candidates
+          changed_when: false
+
+        - name: Display Kubernetes package candidates
+          ansible.builtin.debug:
+            var: kubernetes_package_candidates.stdout_lines
+
   handlers:
     - name: Restart containerd
       ansible.builtin.systemd_service:
