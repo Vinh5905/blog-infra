@@ -96,3 +96,65 @@
           ansible.builtin.command:
             cmd: sysctl -p /etc/sysctl.d/99-blogapp-kubernetes.conf
           when: kubernetes_sysctl.stdout_lines != ['1', '1', '1']
+
+    - name: Verify runtime package versions are configured
+      ansible.builtin.assert:
+        that:
+          - containerd_version | length > 0
+          - runc_version | length > 0
+        fail_msg: "Set containerd_version and runc_version before installing."
+
+    - name: Install pinned container runtime packages
+      ansible.builtin.apt:
+        name:
+          - "containerd={{ containerd_version }}"
+          - "runc={{ runc_version }}"
+        state: present
+        lock_timeout: 120
+      notify: Restart containerd
+
+    - name: Ensure containerd configuration directory exists
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure containerd for Kubernetes
+      ansible.builtin.template:
+        src: ../templates/containerd-config.toml.j2
+        dest: /etc/containerd/config.toml
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+      notify: Restart containerd
+
+    - name: Enable and start containerd
+      ansible.builtin.systemd_service:
+        name: containerd
+        enabled: true
+        state: started
+
+    - name: Apply pending containerd restart before health checks
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check containerd plugins after configuration
+      when: not ansible_check_mode
+      block:
+        - name: Read containerd plugin status
+          ansible.builtin.command:
+            cmd: ctr plugins ls
+          register: containerd_plugins
+          changed_when: false
+
+        - name: Display containerd plugin status
+          ansible.builtin.debug:
+            var: containerd_plugins.stdout_lines
+
+  handlers:
+    - name: Restart containerd
+      ansible.builtin.systemd_service:
+        name: containerd
+        state: restarted
