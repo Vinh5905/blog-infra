@@ -1,0 +1,184 @@
+---
+- name: Bootstrap dev Kubernetes control plane
+  hosts: role_control_plane
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Verify control plane inventory
+      ansible.builtin.assert:
+        that:
+          - groups['role_control_plane'] | length == 1
+          - private_ip_address | default('') | length > 0
+          - private_dns_name | default('') | length > 0
+          - ec2_tags.Project == 'blogapp'
+          - ec2_tags.Environment == 'dev'
+          - ec2_tags.Role == 'control-plane'
+        fail_msg: "Expected exactly one dev control plane with EC2 identity information."
+
+    - name: Ensure Kubernetes configuration directory exists
+      ansible.builtin.file:
+        path: /etc/kubernetes
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Ensure encryption and audit directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - /etc/kubernetes/encryption
+        - /etc/kubernetes/audit
+        - /var/log/kubernetes/audit
+
+    - name: Prepare persistent Secret encryption key
+      when: not ansible_check_mode
+      block:
+        - name: Check whether encryption key already exists
+          ansible.builtin.stat:
+            path: /etc/kubernetes/encryption/secrets.key
+            get_checksum: false
+            get_mime: false
+          register: encryption_key_file
+
+        - name: Check for existing cluster state
+          ansible.builtin.stat:
+            path: "{{ item }}"
+            get_checksum: false
+            get_mime: false
+          loop:
+            - /etc/kubernetes/admin.conf
+            - /etc/kubernetes/manifests/kube-apiserver.yaml
+            - /var/lib/etcd/member
+            - /etc/kubernetes/encryption/encryption-config.yaml
+          register: existing_cluster_state
+
+        - name: Refuse to generate a replacement key for existing cluster state
+          ansible.builtin.assert:
+            that:
+              - >-
+                encryption_key_file.stat.exists or
+                (existing_cluster_state.results
+                | selectattr('stat.exists', 'equalto', true)
+                | list | length == 0)
+            fail_msg: >-
+              Cluster state exists but secrets.key is missing.
+              Restore the original encryption key before continuing.
+
+        - name: Generate encryption key once
+          ansible.builtin.command:
+            argv:
+              - openssl
+              - rand
+              - -base64
+              - -out
+              - /etc/kubernetes/encryption/secrets.key
+              - "32"
+            creates: /etc/kubernetes/encryption/secrets.key
+          no_log: true
+
+        - name: Restrict encryption key file permissions
+          ansible.builtin.file:
+            path: /etc/kubernetes/encryption/secrets.key
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Read the existing encryption key
+          ansible.builtin.slurp:
+            src: /etc/kubernetes/encryption/secrets.key
+          register: encryption_key_content
+          no_log: true
+
+        - name: Load encryption key into a temporary host variable
+          ansible.builtin.set_fact:
+            kubernetes_secrets_encryption_key: >-
+              {{ encryption_key_content.content | b64decode | trim }}
+            cacheable: false
+          no_log: true
+
+        - name: Verify encryption key format and length
+          ansible.builtin.assert:
+            that:
+              - kubernetes_secrets_encryption_key is match('^[A-Za-z0-9+/]{43}=$')
+              - >-
+                (kubernetes_secrets_encryption_key
+                | b64decode(encoding='latin-1')
+                | length) == 32
+            fail_msg: "Expected a base64-encoded 32-byte encryption key."
+          no_log: true
+
+        - name: Check whether encryption configuration exists
+          ansible.builtin.stat:
+            path: /etc/kubernetes/encryption/encryption-config.yaml
+            get_checksum: false
+            get_mime: false
+          register: encryption_config_file
+
+        - name: Refuse to recreate missing configuration for existing cluster state
+          ansible.builtin.assert:
+            that:
+              - >-
+                encryption_config_file.stat.exists or
+                (existing_cluster_state.results
+                | selectattr('stat.exists', 'equalto', true)
+                | list | length == 0)
+            fail_msg: >-
+              Cluster state exists but encryption-config.yaml is missing.
+              Restore and verify the original encryption configuration.
+
+        - name: Read existing encryption configuration
+          ansible.builtin.slurp:
+            src: /etc/kubernetes/encryption/encryption-config.yaml
+          register: existing_encryption_config
+          when: encryption_config_file.stat.exists
+          no_log: true
+
+        - name: Verify existing encryption configuration matches the expected configuration
+          ansible.builtin.assert:
+            that:
+              - current_config == expected_config
+            fail_msg: >-
+              Existing encryption configuration differs from the expected configuration.
+              Review the original keys and providers before continuing.
+          vars:
+            current_config: >-
+              {{ existing_encryption_config.content | b64decode | from_yaml }}
+            expected_config: >-
+              {{ lookup('ansible.builtin.template',
+                 playbook_dir ~ '/../templates/encryption-config.yml.j2')
+                 | from_yaml }}
+          when: encryption_config_file.stat.exists
+          no_log: true
+
+        - name: Write verified Secret encryption configuration
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/encryption-config.yml.j2"
+            dest: /etc/kubernetes/encryption/encryption-config.yaml
+            owner: root
+            group: root
+            mode: '0600'
+          no_log: true
+          diff: false
+
+        - name: Write Kubernetes audit policy
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/audit-policy.yml.j2"
+            dest: /etc/kubernetes/audit/audit-policy.yaml
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Write validated kubeadm initialization configuration
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/kubeadm-init-yml.j2"
+            dest: /etc/kubernetes/kubeadm-init.yaml
+            owner: root
+            group: root
+            mode: '0600'
+            validate: /usr/bin/kubeadm config validate --config %s

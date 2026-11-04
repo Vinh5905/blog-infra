@@ -1,0 +1,86 @@
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+
+clusterName: "{{ kubernetes_cluster_name }}"
+kubernetesVersion: "{{ kubernetes_version }}"
+
+controlPlaneEndpoint: "{{ kubernetes_api_dns }}:{{ kubernetes_api_port }}"
+
+networking:
+  podSubnet: "{{ kubernetes_pod_subnet }}"
+  serviceSubnet: "{{ kubernetes_service_subnet }}"
+  dnsDomain: "{{ kubernetes_dns_domain }}"
+
+apiServer:
+  certSANs:
+    - "{{ kubernetes_api_dns }}"
+
+  extraArgs:
+    - name: encryption-provider-config
+      value: /etc/kubernetes/encryption/encryption-config.yaml
+
+    - name: audit-policy-file
+      value: /etc/kubernetes/audit/audit-policy.yaml
+
+    - name: audit-log-path
+      value: /var/log/kubernetes/audit/audit.log
+
+    - name: audit-log-maxage
+      value: "7"
+
+    - name: audit-log-maxbackup
+      value: "3"
+
+    - name: audit-log-maxsize
+      value: "50"
+
+    - name: service-account-issuer
+      value: "{{ kubernetes_service_account_issuer }}"
+
+    - name: service-account-jwks-uri
+      value: "{{ kubernetes_service_account_issuer }}/openid/v1/jwks"
+      
+  extraVolumes:
+    - name: encryption-config
+      hostPath: /etc/kubernetes/encryption
+      mountPath: /etc/kubernetes/encryption
+      readOnly: true
+      pathType: Directory
+
+    - name: audit-policy
+      hostPath: /etc/kubernetes/audit
+      mountPath: /etc/kubernetes/audit
+      readOnly: true
+      pathType: Directory
+
+    - name: audit-logs
+      hostPath: /var/log/kubernetes/audit
+      mountPath: /var/log/kubernetes/audit
+      readOnly: false
+      pathType: Directory
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+
+localAPIEndpoint:
+  advertiseAddress: "{{ private_ip_address }}"
+  bindPort: {{ kubernetes_api_port }}
+
+nodeRegistration:
+  name: "{{ private_dns_name }}"
+  criSocket: "{{ kubernetes_cri_socket }}"
+  kubeletExtraArgs:
+    - name: cloud-provider
+      value: external
+    - name: node-ip
+      value: "{{ private_ip_address }}"
+
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+
+cgroupDriver: systemd
+rotateCertificates: true
+serverTLSBootstrap: true
