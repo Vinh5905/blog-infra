@@ -31,3 +31,68 @@
     - name: Refresh Ubuntu package lists
       ansible.builtin.apt:
         update_cache: true
+
+    - name: Detect active swap
+      ansible.builtin.command:
+        cmd: swapon --show --noheadings
+      register: active_swap
+      changed_when: false
+      check_mode: false
+
+    - name: Disable active swap
+      ansible.builtin.command:
+        cmd: swapoff --all
+      when: (active_swap.stdout | trim) != ''
+
+    - name: Disable swap entries in fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([ \t]*[^#\s]\S*[ \t]+\S+[ \t]+swap[ \t]+[^\r\n]*)$'
+        replace: '# \1'
+        backup: true
+
+    - name: Configure kernel modules to load at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/blogapp-kubernetes.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Load Kubernetes kernel modules now
+      ansible.builtin.command:
+        cmd: "modprobe {{ item }}"
+        creates: "/sys/module/{{ item }}"
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Persist Kubernetes kernel network settings
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-blogapp-kubernetes.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+
+    - name: Apply Kubernetes kernel network settings when needed
+      when: not ansible_check_mode
+      block:
+        - name: Read current kernel network settings
+          ansible.builtin.command:
+            cmd: >-
+              sysctl -n net.ipv4.ip_forward
+              net.bridge.bridge-nf-call-iptables
+              net.bridge.bridge-nf-call-ip6tables
+          register: kubernetes_sysctl
+          changed_when: false
+
+        - name: Load Kubernetes sysctl configuration
+          ansible.builtin.command:
+            cmd: sysctl -p /etc/sysctl.d/99-blogapp-kubernetes.conf
+          when: kubernetes_sysctl.stdout_lines != ['1', '1', '1']
