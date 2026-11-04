@@ -71,6 +71,15 @@ resource "aws_vpc_security_group_egress_rule" "worker_https" {
   to_port     = 443
 }
 
+resource "aws_vpc_security_group_egress_rule" "worker_http" {
+  security_group_id = aws_security_group.worker.id
+  description       = "Workers access HTTP package repositories"
+
+  cidr_ipv4   = "0.0.0.0/0"
+  ip_protocol = "tcp"
+  from_port   = 80
+  to_port     = 80
+}
 
 # -------------------------------------------------------------
 resource "aws_security_group" "automation" {
@@ -215,6 +224,16 @@ resource "aws_vpc_security_group_egress_rule" "control_plane_https" {
   ip_protocol = "tcp"
   from_port   = 443
   to_port     = 443
+}
+
+resource "aws_vpc_security_group_egress_rule" "control_plane_http" {
+  security_group_id = aws_security_group.control_plane.id
+  description       = "Control plane accesses HTTP package repositories"
+
+  cidr_ipv4   = "0.0.0.0/0"
+  ip_protocol = "tcp"
+  from_port   = 80
+  to_port     = 80
 }
 
 # -------------------------------------------------------------
