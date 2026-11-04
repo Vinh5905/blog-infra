@@ -16,6 +16,129 @@
           - ec2_tags.Role == 'control-plane'
         fail_msg: "Expected exactly one dev control plane with EC2 identity information."
 
+    - name: Inspect initial control plane bootstrap paths
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+        get_checksum: false
+        get_mime: false
+      loop:
+        - name: admin_conf
+          path: /etc/kubernetes/admin.conf
+        - name: kubelet_conf
+          path: /etc/kubernetes/kubelet.conf
+        - name: apiserver_manifest
+          path: /etc/kubernetes/manifests/kube-apiserver.yaml
+        - name: etcd_member
+          path: /var/lib/etcd/member
+        - name: encryption_key
+          path: /etc/kubernetes/encryption/secrets.key
+        - name: encryption_config
+          path: /etc/kubernetes/encryption/encryption-config.yaml
+      loop_control:
+        label: "{{ item.path }}"
+      register: bootstrap_path_checks
+
+    - name: Index initial bootstrap state by path name
+      ansible.builtin.set_fact:
+        initial_bootstrap_state: >-
+          {{ dict(bootstrap_path_checks.results | map(attribute='item.name')
+             | zip(bootstrap_path_checks.results | map(attribute='stat'))) }}
+        cacheable: false
+
+    - name: Detect existing kubeadm initialization state
+      ansible.builtin.set_fact:
+        initial_kubeadm_state_exists: >-
+          {{ initial_bootstrap_state.admin_conf.exists
+             or initial_bootstrap_state.kubelet_conf.exists
+             or initial_bootstrap_state.apiserver_manifest.exists
+             or initial_bootstrap_state.etcd_member.exists }}
+        cacheable: false
+
+    - name: Refuse initialization when partial state exists without admin kubeconfig
+      ansible.builtin.assert:
+        that:
+          - >-
+            initial_bootstrap_state.admin_conf.exists
+            or not initial_kubeadm_state_exists
+        fail_msg: >-
+          Kubernetes initialization artifacts exist but admin.conf is missing.
+          Inspect the existing state before continuing.
+
+    - name: Verify access to an existing control plane
+      when: initial_bootstrap_state.admin_conf.exists
+      block:
+        - name: Read API endpoint from existing admin kubeconfig
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - config
+              - view
+              - --minify
+              - --output=jsonpath={.clusters[0].cluster.server}
+          register: existing_api_endpoint
+          changed_when: false
+          check_mode: false
+
+        - name: Verify existing kubeconfig uses the expected API endpoint
+          ansible.builtin.assert:
+            that:
+              - >-
+                (existing_api_endpoint.stdout | trim)
+                == ('https://' ~ kubernetes_api_dns ~ ':'
+                    ~ (kubernetes_api_port | string))
+            fail_msg: "Existing admin.conf points to an unexpected API endpoint."
+
+        - name: Verify existing API server is ready
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - --raw=/readyz
+          register: existing_api_readiness
+          changed_when: false
+          check_mode: false
+          until: existing_api_readiness.rc == 0
+          retries: 6
+          delay: 5
+
+        - name: Read existing kubeadm cluster configuration
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - configmap
+              - kubeadm-config
+              - --namespace=kube-system
+              - --output=json
+          register: existing_kubeadm_config
+          changed_when: false
+          check_mode: false
+
+        - name: Verify existing cluster configuration matches dev settings
+          ansible.builtin.assert:
+            that:
+              - cluster_config.clusterName == kubernetes_cluster_name
+              - cluster_config.kubernetesVersion == kubernetes_version
+              - >-
+                cluster_config.controlPlaneEndpoint
+                == (kubernetes_api_dns ~ ':'
+                    ~ (kubernetes_api_port | string))
+              - cluster_config.networking.podSubnet == kubernetes_pod_subnet
+              - cluster_config.networking.serviceSubnet == kubernetes_service_subnet
+              - cluster_config.networking.dnsDomain == kubernetes_dns_domain
+            fail_msg: >-
+              Existing kubeadm cluster configuration differs from dev settings.
+              Review the existing cluster before continuing.
+          vars:
+            cluster_config: >-
+              {{ (existing_kubeadm_config.stdout | from_json)
+                 ['data']['ClusterConfiguration'] | from_yaml }}
+
     - name: Ensure Kubernetes configuration directory exists
       ansible.builtin.file:
         path: /etc/kubernetes
@@ -39,33 +162,13 @@
     - name: Prepare persistent Secret encryption key
       when: not ansible_check_mode
       block:
-        - name: Check whether encryption key already exists
-          ansible.builtin.stat:
-            path: /etc/kubernetes/encryption/secrets.key
-            get_checksum: false
-            get_mime: false
-          register: encryption_key_file
-
-        - name: Check for existing cluster state
-          ansible.builtin.stat:
-            path: "{{ item }}"
-            get_checksum: false
-            get_mime: false
-          loop:
-            - /etc/kubernetes/admin.conf
-            - /etc/kubernetes/manifests/kube-apiserver.yaml
-            - /var/lib/etcd/member
-            - /etc/kubernetes/encryption/encryption-config.yaml
-          register: existing_cluster_state
-
         - name: Refuse to generate a replacement key for existing cluster state
           ansible.builtin.assert:
             that:
               - >-
-                encryption_key_file.stat.exists or
-                (existing_cluster_state.results
-                | selectattr('stat.exists', 'equalto', true)
-                | list | length == 0)
+                initial_bootstrap_state.encryption_key.exists or
+                (not initial_kubeadm_state_exists
+                 and not initial_bootstrap_state.encryption_config.exists)
             fail_msg: >-
               Cluster state exists but secrets.key is missing.
               Restore the original encryption key before continuing.
@@ -113,21 +216,12 @@
             fail_msg: "Expected a base64-encoded 32-byte encryption key."
           no_log: true
 
-        - name: Check whether encryption configuration exists
-          ansible.builtin.stat:
-            path: /etc/kubernetes/encryption/encryption-config.yaml
-            get_checksum: false
-            get_mime: false
-          register: encryption_config_file
-
         - name: Refuse to recreate missing configuration for existing cluster state
           ansible.builtin.assert:
             that:
               - >-
-                encryption_config_file.stat.exists or
-                (existing_cluster_state.results
-                | selectattr('stat.exists', 'equalto', true)
-                | list | length == 0)
+                initial_bootstrap_state.encryption_config.exists
+                or not initial_kubeadm_state_exists
             fail_msg: >-
               Cluster state exists but encryption-config.yaml is missing.
               Restore and verify the original encryption configuration.
@@ -136,7 +230,7 @@
           ansible.builtin.slurp:
             src: /etc/kubernetes/encryption/encryption-config.yaml
           register: existing_encryption_config
-          when: encryption_config_file.stat.exists
+          when: initial_bootstrap_state.encryption_config.exists
           no_log: true
 
         - name: Verify existing encryption configuration matches the expected configuration
@@ -153,7 +247,7 @@
               {{ lookup('ansible.builtin.template',
                  playbook_dir ~ '/../templates/encryption-config.yml.j2')
                  | from_yaml }}
-          when: encryption_config_file.stat.exists
+          when: initial_bootstrap_state.encryption_config.exists
           no_log: true
 
         - name: Write verified Secret encryption configuration
@@ -182,3 +276,165 @@
             group: root
             mode: '0600'
             validate: /usr/bin/kubeadm config validate --config %s
+
+    - name: Check prerequisites for a new control plane
+      when:
+        - not initial_bootstrap_state.admin_conf.exists
+        - not ansible_check_mode
+      block:
+        - name: Read installed kubeadm version
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubeadm
+              - version
+              - -o
+              - short
+          register: preinit_kubeadm_version
+          changed_when: false
+
+        - name: Verify kubeadm matches the pinned Kubernetes version
+          ansible.builtin.assert:
+            that:
+              - preinit_kubeadm_version.stdout | trim == kubernetes_version
+            fail_msg: "Installed kubeadm does not match kubernetes_version."
+
+        - name: Read container runtime readiness before initialization
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/crictl
+              - --config=/etc/crictl.yaml
+              - "--runtime-endpoint={{ kubernetes_cri_socket }}"
+              - info
+              - --output=json
+          register: preinit_cri_info
+          changed_when: false
+
+        - name: Verify container runtime is ready before initialization
+          ansible.builtin.assert:
+            that:
+              - >-
+                ((preinit_cri_info.stdout | from_json)['status']['conditions']
+                | selectattr('type', 'equalto', 'RuntimeReady')
+                | map(attribute='status')
+                | list) == [true]
+            fail_msg: "Container runtime does not report RuntimeReady=true."
+
+        - name: List images required by the kubeadm configuration
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubeadm
+              - config
+              - images
+              - list
+              - --config=/etc/kubernetes/kubeadm-init.yaml
+          register: preinit_kubernetes_images
+          changed_when: false
+
+        - name: Display required Kubernetes images
+          ansible.builtin.debug:
+            var: preinit_kubernetes_images.stdout_lines
+
+        - name: Read images already cached in containerd
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/crictl
+              - --config=/etc/crictl.yaml
+              - "--image-endpoint={{ kubernetes_cri_socket }}"
+              - images
+              - --output=json
+          register: preinit_cached_images
+          changed_when: false
+
+        - name: Identify missing Kubernetes images
+          ansible.builtin.set_fact:
+            preinit_missing_images: >-
+              {{ preinit_kubernetes_images.stdout_lines
+                 | difference(
+                     (preinit_cached_images.stdout | from_json)['images']
+                     | default([], true)
+                     | map(attribute='repoTags', default=[])
+                     | flatten
+                   ) }}
+            cacheable: false
+
+        - name: Pull required Kubernetes images when any are missing
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubeadm
+              - config
+              - images
+              - pull
+              - --config=/etc/kubernetes/kubeadm-init.yaml
+          when: preinit_missing_images | length > 0
+
+    - name: Initialize the first Kubernetes control plane
+      when:
+        - not initial_bootstrap_state.admin_conf.exists
+        - not ansible_check_mode
+      block:
+        - name: Run kubeadm init once
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubeadm
+              - init
+              - --config=/etc/kubernetes/kubeadm-init.yaml
+              - --skip-token-print
+            creates: /etc/kubernetes/admin.conf
+          no_log: true
+
+        - name: Restrict admin kubeconfig permissions
+          ansible.builtin.file:
+            path: /etc/kubernetes/admin.conf
+            owner: root
+            group: root
+            mode: '0600'
+
+        - name: Wait for the initialized API server to become ready
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - --raw=/readyz
+          register: initialized_api_readiness
+          changed_when: false
+          until: initialized_api_readiness.rc == 0
+          retries: 12
+          delay: 5
+
+    - name: Display cluster status after bootstrap
+      when: not ansible_check_mode
+      block:
+        - name: Read Kubernetes node status
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - nodes
+              - --output=wide
+          register: bootstrap_nodes
+          changed_when: false
+
+        - name: Display Kubernetes nodes
+          ansible.builtin.debug:
+            var: bootstrap_nodes.stdout_lines
+
+        - name: Read Kubernetes system Pod status
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - pods
+              - --namespace=kube-system
+              - --output=wide
+          register: bootstrap_system_pods
+          changed_when: false
+
+        - name: Display Kubernetes system Pods
+          ansible.builtin.debug:
+            var: bootstrap_system_pods.stdout_lines
