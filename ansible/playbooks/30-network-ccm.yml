@@ -1,0 +1,147 @@
+---
+- name: Bootstrap dev cluster networking and cloud integration
+  hosts: role_control_plane
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Ensure Calico manifest directory exists
+      ansible.builtin.file:
+        path: /etc/kubernetes/addons/calico
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Download pinned Calico manifests
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/{{ item }}"
+        dest: "/etc/kubernetes/addons/calico/{{ item }}"
+        checksum: "{{ calico_manifest_checksums[item] }}"
+        owner: root
+        group: root
+        mode: '0644'
+        timeout: 60
+      loop:
+        - v3_projectcalico_org.yaml
+        - tigera-operator.yaml
+
+    - name: Register Calico API resources
+      when: not ansible_check_mode
+      block:
+        - name: Compare Calico API manifest with the cluster
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - diff
+              - --server-side
+              - --field-manager=blogapp-ansible
+              - -f
+              - /etc/kubernetes/addons/calico/v3_projectcalico_org.yaml
+          register: calico_api_diff
+          changed_when: false
+          failed_when: calico_api_diff.rc not in [0, 1]
+
+        - name: Apply Calico API manifest when different
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - apply
+              - --server-side
+              - --field-manager=blogapp-ansible
+              - -f
+              - /etc/kubernetes/addons/calico/v3_projectcalico_org.yaml
+          when: calico_api_diff.rc == 1
+
+    - name: Deploy Tigera Operator
+      when: not ansible_check_mode
+      block:
+        - name: Apply Tigera Operator manifest
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - apply
+              - -f
+              - /etc/kubernetes/addons/calico/tigera-operator.yaml
+          register: tigera_operator_apply
+          changed_when: >-
+            tigera_operator_apply.stdout
+            is search('(?m) (created|configured)$')
+
+        - name: Wait for Tigera Operator deployment
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - rollout
+              - status
+              - deployment/tigera-operator
+              - --namespace=tigera-operator
+              - --timeout=180s
+          changed_when: false
+
+    - name: Configure Calico networking
+      when: not ansible_check_mode
+      block:
+        - name: Wait for Installation CRD to become established
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - wait
+              - --for=condition=Established
+              - --timeout=30s
+              - crd/installations.operator.tigera.io
+          register: calico_installation_crd
+          changed_when: false
+          until: calico_installation_crd.rc == 0
+          retries: 6
+          delay: 5
+
+        - name: Render Calico installation manifest
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/calico-installation.yml.j2"
+            dest: /etc/kubernetes/addons/calico/installation.yaml
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Apply Calico installation manifest
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - apply
+              - -f
+              - /etc/kubernetes/addons/calico/installation.yaml
+          register: calico_installation_apply
+          changed_when: >-
+            calico_installation_apply.stdout
+            is search('(?m) (created|configured)$')
+
+    - name: Inspect Calico bootstrap status
+      when: not ansible_check_mode
+      block:
+        - name: Read Calico and node status
+          ansible.builtin.command:
+            cmd: >-
+              /usr/bin/kubectl
+              --kubeconfig=/etc/kubernetes/admin.conf
+              get {{ item }}
+          loop:
+            - "pods --namespace=calico-system -o wide"
+            - "daemonsets --namespace=calico-system -o wide"
+            - "tigerastatus"
+            - "nodes -o wide"
+          register: calico_bootstrap_status
+          changed_when: false
+
+        - name: Display Calico and node status
+          ansible.builtin.debug:
+            msg: "{{ item.stdout_lines }}"
+          loop: "{{ calico_bootstrap_status.results }}"
+          loop_control:
+            label: "{{ item.item }}"

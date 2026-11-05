@@ -24,3 +24,9 @@ kubernetes_dns_domain: "cluster.local"
 kubernetes_cri_socket: "unix:///run/containerd/containerd.sock"
 
 kubernetes_service_account_issuer: "https://oidc.dev.blogapp.todicode.tech"
+
+calico_version: "v3.33.0"
+
+calico_manifest_checksums:
+  v3_projectcalico_org.yaml: "sha256:5306c2c6d9fd6762d804f9da51c049b8269c33498a364c5df0eed555aba026bd"
+  tigera-operator.yaml: "sha256:aef423b36aef8cf86567f92bbe5eea4b4ca105a6fc7dbf43de599c6fa70388ba"
