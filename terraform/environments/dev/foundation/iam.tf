@@ -214,3 +214,24 @@ resource "aws_iam_role_policy" "automation_ssm_sessions" {
   role   = aws_iam_role.automation.name
   policy = data.aws_iam_policy_document.automation_ssm_sessions.json
 }
+
+# -------------------------------------------------------------
+data "aws_iam_policy_document" "automation_oidc_publish" {
+  statement {
+    sid     = "PublishOIDCPublicDocuments"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+
+    resources = [
+      "${module.oidc_bucket.s3_bucket_arn}/.well-known/openid-configuration",
+      "${module.oidc_bucket.s3_bucket_arn}/openid/v1/jwks",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "automation_oidc_publish" {
+  name = "blogapp-dev-oidc-publish"
+
+  role   = aws_iam_role.automation.name
+  policy = data.aws_iam_policy_document.automation_oidc_publish.json
+}

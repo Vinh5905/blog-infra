@@ -1,0 +1,173 @@
+---
+- name: Export dev Kubernetes OIDC public documents
+  hosts: role_control_plane
+  become: true
+  gather_facts: false
+
+  vars:
+    kubernetes_oidc_local_export_dir: >-
+      {{ lookup('ansible.builtin.env', 'HOME') }}/blogapp-ops/oidc-documents/{{ inventory_hostname }}
+    kubernetes_oidc_bucket_name: blogapp-dev-oidc-947856326077-ap-southeast-1
+    kubernetes_oidc_bucket_owner: '947856326077'
+    kubernetes_oidc_publish_region: ap-southeast-1
+
+  tasks:
+    - name: Read ServiceAccount issuer discovery document
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/kubectl
+          - --kubeconfig=/etc/kubernetes/admin.conf
+          - get
+          - --raw=/.well-known/openid-configuration
+      register: kubernetes_oidc_discovery
+      changed_when: false
+      check_mode: false
+
+    - name: Read ServiceAccount public signing keys
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/kubectl
+          - --kubeconfig=/etc/kubernetes/admin.conf
+          - get
+          - --raw=/openid/v1/jwks
+      register: kubernetes_oidc_jwks
+      changed_when: false
+      check_mode: false
+
+    - name: Parse OIDC public documents
+      ansible.builtin.set_fact:
+        kubernetes_oidc_discovery_document: >-
+          {{ kubernetes_oidc_discovery.stdout | from_json }}
+        kubernetes_oidc_jwks_document: >-
+          {{ kubernetes_oidc_jwks.stdout | from_json }}
+
+    - name: Verify OIDC issuer and JWKS endpoint
+      ansible.builtin.assert:
+        that:
+          - >-
+            kubernetes_oidc_discovery_document.issuer
+            == kubernetes_service_account_issuer
+          - >-
+            kubernetes_oidc_discovery_document.jwks_uri
+            == kubernetes_service_account_issuer ~ '/openid/v1/jwks'
+          - kubernetes_oidc_jwks_document['keys'] | length > 0
+        fail_msg: >-
+          OIDC documents do not match the configured issuer
+          or contain no signing keys.
+
+    - name: Verify JWKS contains only public signing keys
+      ansible.builtin.assert:
+        that:
+          - item.kty in ['RSA', 'EC']
+          - item.kid is defined
+          - item.kid | length > 0
+          - >-
+            ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k']
+            | intersect(item.keys() | list) | length == 0
+        fail_msg: >-
+          JWKS contains an unsupported key, a missing key ID,
+          or private key material.
+      loop: "{{ kubernetes_oidc_jwks_document['keys'] }}"
+      loop_control:
+        label: "{{ item.kid | default('missing-kid') }}"
+
+    - name: Ensure OIDC destination directories exist on automation host
+      ansible.builtin.file:
+        path: "{{ kubernetes_oidc_local_export_dir }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - .well-known
+        - openid/v1
+      delegate_to: localhost
+      become: false
+
+    - name: Write verified OIDC public documents on automation host
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/oidc-document.json.j2"
+        dest: "{{ kubernetes_oidc_local_export_dir }}/{{ item.filename }}"
+        mode: '0644'
+      vars:
+        oidc_document: "{{ item.document }}"
+      loop:
+        - filename: .well-known/openid-configuration
+          document: "{{ kubernetes_oidc_discovery_document }}"
+        - filename: openid/v1/jwks
+          document: "{{ kubernetes_oidc_jwks_document }}"
+      loop_control:
+        label: "{{ item.filename }}"
+      delegate_to: localhost
+      become: false
+
+    - name: Publish OIDC public documents from automation host to S3
+      ansible.builtin.command:
+        argv:
+          - aws
+          - s3api
+          - put-object
+          - --bucket
+          - "{{ kubernetes_oidc_bucket_name }}"
+          - --expected-bucket-owner
+          - "{{ kubernetes_oidc_bucket_owner }}"
+          - --key
+          - "{{ item }}"
+          - --body
+          - "{{ kubernetes_oidc_local_export_dir }}/{{ item }}"
+          - --content-type
+          - application/json
+          - --cache-control
+          - public,max-age=300
+          - --region
+          - "{{ kubernetes_oidc_publish_region }}"
+          - --no-cli-pager
+      loop:
+        - .well-known/openid-configuration
+        - openid/v1/jwks
+      loop_control:
+        label: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      when: not ansible_check_mode
+      # Each publish writes a new version in the versioned OIDC bucket.
+      changed_when: true
+
+    - name: Verify public OIDC documents match the cluster
+      ansible.builtin.uri:
+        url: "{{ kubernetes_service_account_issuer }}/{{ item.path }}"
+        method: GET
+        return_content: true
+        status_code: 200
+        validate_certs: true
+        follow_redirects: none
+        timeout: 15
+      register: kubernetes_oidc_public_document
+      until:
+        - kubernetes_oidc_public_document.status | default(-1) == 200
+        - >-
+            (kubernetes_oidc_public_document.json | default({}))
+            == item.document
+      retries: 36
+      delay: 10
+      loop:
+        - path: .well-known/openid-configuration
+          document: "{{ kubernetes_oidc_discovery_document }}"
+        - path: openid/v1/jwks
+          document: "{{ kubernetes_oidc_jwks_document }}"
+      loop_control:
+        label: "{{ item.path }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Display OIDC document summary
+      ansible.builtin.debug:
+        msg:
+          issuer: >-
+            {{ kubernetes_oidc_discovery_document.issuer }}
+          jwks_uri: >-
+            {{ kubernetes_oidc_discovery_document.jwks_uri }}
+          public_key_ids: >-
+            {{ kubernetes_oidc_jwks_document['keys'] | map(attribute='kid') | list }}
+          export_directory: "{{ kubernetes_oidc_local_export_dir }}"
+          publish_bucket: "{{ kubernetes_oidc_bucket_name }}"

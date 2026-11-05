@@ -145,3 +145,41 @@ output "database_master_secret_arn" {
   description = "ARN of the RDS-managed master credentials secret"
   value       = module.database.db_instance_master_user_secret_arn
 }
+
+output "oidc_certificate_dns_validation_records" {
+  description = "Public DNS records required to validate the OIDC certificate"
+
+  value = {
+    for option in aws_acm_certificate.oidc.domain_validation_options :
+    option.domain_name => {
+      name  = option.resource_record_name
+      type  = option.resource_record_type
+      value = option.resource_record_value
+    }
+  }
+}
+
+output "oidc_issuer_url" {
+  description = "Public issuer URL used by Kubernetes ServiceAccount tokens"
+  value       = local.oidc_issuer_url
+}
+
+output "oidc_bucket_name" {
+  description = "S3 bucket containing public OIDC discovery and JWKS documents"
+  value       = module.oidc_bucket.s3_bucket_id
+}
+
+output "oidc_cloudfront_domain_name" {
+  description = "CloudFront hostname used as the OIDC DNS CNAME target"
+  value       = module.oidc_cdn.cloudfront_distribution_domain_name
+}
+
+output "oidc_cloudfront_distribution_id" {
+  description = "CloudFront distribution ID for OIDC operations"
+  value       = module.oidc_cdn.cloudfront_distribution_id
+}
+
+output "oidc_logs_bucket_name" {
+  description = "S3 bucket containing CloudFront OIDC access logs"
+  value       = module.oidc_logs_bucket.s3_bucket_id
+}
