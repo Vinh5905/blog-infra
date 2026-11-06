@@ -30,3 +30,7 @@ calico_version: "v3.33.0"
 calico_manifest_checksums:
   v3_projectcalico_org.yaml: "sha256:5306c2c6d9fd6762d804f9da51c049b8269c33498a364c5df0eed555aba026bd"
   tigera-operator.yaml: "sha256:aef423b36aef8cf86567f92bbe5eea4b4ca105a6fc7dbf43de599c6fa70388ba"
+
+kubernetes_aws_ccm_version: "v1.36.2"
+kubernetes_aws_ccm_region: "ap-southeast-1"
+kubernetes_aws_ccm_role_arn: "arn:aws:iam::947856326077:role/blogapp-dev-ccm"

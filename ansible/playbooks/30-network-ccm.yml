@@ -145,3 +145,58 @@
           loop: "{{ calico_bootstrap_status.results }}"
           loop_control:
             label: "{{ item.item }}"
+
+    - name: Deploy AWS cloud controller manager
+      when: not ansible_check_mode
+      block:
+        - name: Ensure AWS CCM manifest directory exists
+          ansible.builtin.file:
+            path: /etc/kubernetes/addons/aws-ccm
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Copy AWS CCM RBAC manifest
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/aws-ccm-rbac.yml"
+            dest: /etc/kubernetes/addons/aws-ccm/rbac.yaml
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Render AWS CCM workload manifest
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/aws-ccm-daemonset.yml.j2"
+            dest: /etc/kubernetes/addons/aws-ccm/workload.yaml
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Apply AWS CCM manifests
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - apply
+              - -f
+              - "/etc/kubernetes/addons/aws-ccm/{{ item }}"
+          loop:
+            - rbac.yaml
+            - workload.yaml
+          register: aws_ccm_apply
+          changed_when: >-
+            aws_ccm_apply.stdout
+            is search('(?m) (created|configured)$')
+
+        - name: Wait for AWS CCM DaemonSet rollout
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - rollout
+              - status
+              - daemonset/aws-cloud-controller-manager
+              - --namespace=kube-system
+              - --timeout=180s
+          changed_when: false
