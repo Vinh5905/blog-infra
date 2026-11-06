@@ -59,6 +59,7 @@ module "workers" {
     Environment = "dev"
     Role        = "worker"
     Cluster     = "blogapp-dev"
+    "kubernetes.io/cluster/blogapp-dev" = "owned"
   }
 }
 

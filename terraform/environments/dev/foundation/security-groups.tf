@@ -453,3 +453,46 @@ resource "aws_vpc_security_group_ingress_rule" "database_from_automation" {
   from_port   = 3306
   to_port     = 3306
 }
+
+
+# -------------------------------------------------------------
+locals {
+  calico_typha_paths = {
+    worker_to_control_plane = {
+      source      = aws_security_group.worker.id
+      destination = aws_security_group.control_plane.id
+    }
+    control_plane_to_worker = {
+      source      = aws_security_group.control_plane.id
+      destination = aws_security_group.worker.id
+    }
+    worker_to_worker = {
+      source      = aws_security_group.worker.id
+      destination = aws_security_group.worker.id
+    }
+  }
+}
+
+resource "aws_vpc_security_group_egress_rule" "calico_typha" {
+  for_each = local.calico_typha_paths
+
+  security_group_id            = each.value.source
+  referenced_security_group_id = each.value.destination
+  description                  = "Connect to Calico Typha"
+
+  ip_protocol = "tcp"
+  from_port   = 5473
+  to_port     = 5473
+}
+
+resource "aws_vpc_security_group_ingress_rule" "calico_typha" {
+  for_each = local.calico_typha_paths
+
+  security_group_id            = each.value.destination
+  referenced_security_group_id = each.value.source
+  description                  = "Receive Calico Felix connections"
+
+  ip_protocol = "tcp"
+  from_port   = 5473
+  to_port     = 5473
+}
