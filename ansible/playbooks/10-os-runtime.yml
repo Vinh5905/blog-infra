@@ -1,6 +1,6 @@
 ---
-- name: Prepare dev Kubernetes control plane
-  hosts: role_control_plane
+- name: Prepare dev Kubernetes nodes
+  hosts: "role_control_plane,role_worker"
   become: true
   gather_facts: true
 
@@ -12,11 +12,11 @@
           - ansible_facts['distribution_version'] == '24.04'
           - ansible_facts['architecture'] == 'x86_64'
         fail_msg: "Expected Ubuntu 24.04 on x86_64."
-        success_msg: "Control plane matches the expected OS and architecture."
+        success_msg: "Node matches the expected OS and architecture."
 
     - name: Verify internal Kubernetes API DNS resolves
       ansible.builtin.command:
-        cmd: getent ahostsv4 api.dev.blogapp.todicode.tech
+        cmd: "getent ahostsv4 {{ kubernetes_api_dns }}"
       changed_when: false
       check_mode: false
 

@@ -1,0 +1,304 @@
+---
+- name: Join dev Kubernetes workers
+  hosts: role_worker
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Verify worker inventory
+      ansible.builtin.assert:
+        that:
+          - groups.get('role_control_plane', []) | length == 1
+          - ec2_tags.Project == 'blogapp'
+          - ec2_tags.Environment == 'dev'
+          - ec2_tags.Cluster == kubernetes_cluster_name
+          - ec2_tags.Role == 'worker'
+          - private_dns_name | default('') | length > 0
+          - private_ip_address | default('') | length > 0
+        fail_msg: "Expected a dev BlogApp worker and exactly one control plane in inventory."
+
+    - name: Inspect kubeadm files on worker
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        get_checksum: false
+        get_mime: false
+      loop:
+        - /etc/kubernetes/admin.conf
+        - /etc/kubernetes/manifests/kube-apiserver.yaml
+        - /etc/kubernetes/kubelet.conf
+        - /etc/kubernetes/bootstrap-kubelet.conf
+        - /etc/kubernetes/pki/ca.crt
+        - /var/lib/kubelet/config.yaml
+        - /var/lib/kubelet/kubeadm-flags.env
+      register: worker_kubeadm_files
+
+    - name: Collect existing kubeadm paths
+      ansible.builtin.set_fact:
+        worker_kubeadm_paths: >-
+          {{ worker_kubeadm_files.results
+             | selectattr('stat.exists', 'equalto', true)
+             | map(attribute='item')
+             | list }}
+
+    - name: Reject control plane or incomplete bootstrap state
+      ansible.builtin.assert:
+        that:
+          - "'/etc/kubernetes/admin.conf' not in worker_kubeadm_paths"
+          - "'/etc/kubernetes/manifests/kube-apiserver.yaml' not in worker_kubeadm_paths"
+          - "'/etc/kubernetes/bootstrap-kubelet.conf' not in worker_kubeadm_paths"
+          - >-
+            (worker_kubeadm_paths | length == 0)
+            or ('/etc/kubernetes/kubelet.conf' in worker_kubeadm_paths)
+        fail_msg: >-
+          Found control-plane files or incomplete kubeadm state on {{ inventory_hostname }}.
+          Inspect the node before retrying.
+
+    - name: Check prerequisites for a new worker
+      when:
+        - worker_kubeadm_paths | length == 0
+        - not ansible_check_mode
+      block:
+        - name: Read installed kubeadm version
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubeadm
+              - version
+              - -o
+              - short
+          register: worker_kubeadm_version
+          changed_when: false
+
+        - name: Verify kubeadm matches the pinned Kubernetes version
+          ansible.builtin.assert:
+            that:
+              - worker_kubeadm_version.stdout | trim == kubernetes_version
+            fail_msg: "Worker kubeadm does not match kubernetes_version."
+
+        - name: Read worker container runtime status
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/crictl
+              - --config=/etc/crictl.yaml
+              - "--runtime-endpoint={{ kubernetes_cri_socket }}"
+              - info
+              - --output=json
+          register: worker_cri_info
+          changed_when: false
+
+        - name: Verify worker container runtime is ready
+          ansible.builtin.assert:
+            that:
+              - >-
+                ((worker_cri_info.stdout | from_json)['status']['conditions']
+                | selectattr('type', 'equalto', 'RuntimeReady')
+                | map(attribute='status')
+                | list) == [true]
+            fail_msg: "Worker container runtime does not report RuntimeReady=true."
+
+        - name: Verify worker can reach the private Kubernetes API port
+          ansible.builtin.wait_for:
+            host: "{{ kubernetes_api_dns }}"
+            port: "{{ kubernetes_api_port }}"
+            state: started
+            connect_timeout: 3
+            timeout: 30
+
+    - name: Verify an existing worker belongs to this cluster
+      when:
+        - "'/etc/kubernetes/kubelet.conf' in worker_kubeadm_paths"
+        - not ansible_check_mode
+      block:
+        - name: Read the worker kubeconfig endpoint and CA
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/kubelet.conf
+              - config
+              - view
+              - --minify
+              - --raw
+              - '--output=jsonpath={.clusters[0].cluster.server}{"\n"}{.clusters[0].cluster.certificate-authority-data}{"\n"}{.clusters[0].cluster.insecure-skip-tls-verify}'
+          register: worker_kubeconfig_cluster
+          changed_when: false
+
+        - name: Read the trusted cluster CA from the control plane
+          ansible.builtin.slurp:
+            src: /etc/kubernetes/pki/ca.crt
+          delegate_to: "{{ groups['role_control_plane'][0] }}"
+          register: trusted_cluster_ca
+
+        - name: Verify the worker kubeconfig matches the expected cluster
+          ansible.builtin.assert:
+            that:
+              - >-
+                worker_kubeconfig_cluster.stdout_lines ==
+                ['https://' ~ kubernetes_api_dns ~ ':' ~ (kubernetes_api_port | string),
+                 trusted_cluster_ca.content]
+            fail_msg: "Existing worker kubeconfig has unexpected API or TLS settings."
+
+        - name: Read the registered Node provider ID from the control plane
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - node
+              - "{{ hostvars[inventory_hostname].private_dns_name }}"
+              - '--output=jsonpath={.spec.providerID}'
+          delegate_to: "{{ groups['role_control_plane'][0] }}"
+          register: registered_worker_provider_id
+          changed_when: false
+
+        - name: Verify the registered Node belongs to this EC2 instance
+          ansible.builtin.assert:
+            that:
+              - registered_worker_provider_id.stdout.startswith('aws:///')
+              - registered_worker_provider_id.stdout.split('/')[-1] == inventory_hostname
+            fail_msg: "The Node providerID does not match this EC2 instance."
+
+    - name: Join a new worker
+      when:
+        - worker_kubeadm_paths | length == 0
+        - not ansible_check_mode
+      vars:
+        expected_join_endpoint: "{{ kubernetes_api_dns }}:{{ kubernetes_api_port }}"
+        worker_join_args: "{{ worker_join_command.stdout.split() }}"
+      block:
+        - name: Check whether the worker name is already registered
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - node
+              - "{{ hostvars[inventory_hostname].private_dns_name }}"
+              - --ignore-not-found
+              - -o
+              - name
+          delegate_to: "{{ groups['role_control_plane'][0] }}"
+          register: existing_worker_node
+          changed_when: false
+
+        - name: Require an unused Kubernetes node name
+          ansible.builtin.assert:
+            that:
+              - existing_worker_node.stdout | trim == ''
+            fail_msg: "A Node with this worker's private DNS name already exists."
+
+        - name: Create a short-lived join token on the control plane
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubeadm
+              - token
+              - create
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --ttl=15m
+              - --print-join-command
+          delegate_to: "{{ groups['role_control_plane'][0] }}"
+          register: worker_join_command
+          no_log: true
+
+        - name: Verify the generated join command has the expected format
+          ansible.builtin.assert:
+            that:
+              - worker_join_args | length == 7
+              - worker_join_args[:4] == ['kubeadm', 'join', expected_join_endpoint, '--token']
+              - worker_join_args[4] is match('^[a-z0-9]{6}[.][a-z0-9]{16}$')
+              - worker_join_args[5] == '--discovery-token-ca-cert-hash'
+              - worker_join_args[6] is match('^sha256:[a-f0-9]{64}$')
+          no_log: true
+
+        - name: Allocate a temporary join configuration file on the worker
+          ansible.builtin.tempfile:
+            path: /run
+            state: file
+            suffix: .kubeadm-join.yaml
+          register: worker_join_file
+
+        - name: Render the join configuration on the worker
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/kubeadm-join-yml.j2"
+            dest: "{{ worker_join_file.path }}"
+            owner: root
+            group: root
+            mode: '0600'
+            validate: /usr/bin/kubeadm config validate --config %s
+          vars:
+            kubernetes_join_token: "{{ worker_join_args[4] }}"
+            kubernetes_join_ca_hash: "{{ worker_join_args[6] }}"
+          diff: false
+          no_log: true
+
+        - name: Join the worker to the cluster
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubeadm
+              - join
+              - --config
+              - "{{ worker_join_file.path }}"
+            creates: /etc/kubernetes/kubelet.conf
+          no_log: true
+
+      always:
+        - name: Remove the temporary join configuration
+          ansible.builtin.file:
+            path: "{{ worker_join_file.path }}"
+            state: absent
+          when: worker_join_file.path is defined
+
+    - name: Verify the worker is ready in Kubernetes
+      when: not ansible_check_mode
+      vars:
+        worker_node_name: "{{ hostvars[inventory_hostname].private_dns_name }}"
+        worker_ec2_zone: "{{ hostvars[inventory_hostname].placement.availability_zone }}"
+        expected_worker_provider_id: "aws:///{{ worker_ec2_zone }}/{{ inventory_hostname }}"
+      block:
+        - name: Wait for the worker Node to register and become ready
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - wait
+              - --for=create
+              - "--for=jsonpath={.spec.providerID}={{ expected_worker_provider_id }}"
+              - --for=condition=Ready
+              - --timeout=180s
+              - "node/{{ worker_node_name }}"
+          delegate_to: "{{ groups['role_control_plane'][0] }}"
+          changed_when: false
+
+        - name: Read the worker Node from the Kubernetes API
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - node
+              - "{{ worker_node_name }}"
+              - -o
+              - json
+          delegate_to: "{{ groups['role_control_plane'][0] }}"
+          register: worker_node_result
+          changed_when: false
+
+        - name: Verify worker address, AWS labels, and cloud taint
+          ansible.builtin.assert:
+            that:
+              - >-
+                private_ip_address in
+                (worker_node.status.addresses | default([])
+                 | selectattr('type', 'equalto', 'InternalIP')
+                 | map(attribute='address') | list)
+              - worker_node.metadata.labels.get('topology.kubernetes.io/zone') == worker_ec2_zone
+              - worker_node.metadata.labels.get('node.kubernetes.io/instance-type') == instance_type
+              - >-
+                'node.cloudprovider.kubernetes.io/uninitialized' not in
+                (worker_node.spec.taints | default([])
+                 | map(attribute='key') | list)
+            success_msg: "Worker {{ worker_node_name }} is Ready as {{ expected_worker_provider_id }}."
+            fail_msg: "Worker Node address, AWS labels, or cloud taint did not match expectations."
+          vars:
+            worker_node: "{{ worker_node_result.stdout | from_json }}"
