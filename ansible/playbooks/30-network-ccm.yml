@@ -26,34 +26,31 @@
         - v3_projectcalico_org.yaml
         - tigera-operator.yaml
 
-    - name: Register Calico API resources
+    - name: Create missing Calico API resources
       when: not ansible_check_mode
-      block:
-        - name: Compare Calico API manifest with the cluster
-          ansible.builtin.command:
-            argv:
-              - /usr/bin/kubectl
-              - --kubeconfig=/etc/kubernetes/admin.conf
-              - diff
-              - --server-side
-              - --field-manager=blogapp-ansible
-              - -f
-              - /etc/kubernetes/addons/calico/v3_projectcalico_org.yaml
-          register: calico_api_diff
-          changed_when: false
-          failed_when: calico_api_diff.rc not in [0, 1]
-
-        - name: Apply Calico API manifest when different
-          ansible.builtin.command:
-            argv:
-              - /usr/bin/kubectl
-              - --kubeconfig=/etc/kubernetes/admin.conf
-              - apply
-              - --server-side
-              - --field-manager=blogapp-ansible
-              - -f
-              - /etc/kubernetes/addons/calico/v3_projectcalico_org.yaml
-          when: calico_api_diff.rc == 1
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/kubectl
+          - --kubeconfig=/etc/kubernetes/admin.conf
+          - create
+          - --save-config=false
+          - --field-manager=blogapp-ansible
+          - -f
+          - /etc/kubernetes/addons/calico/v3_projectcalico_org.yaml
+      register: calico_api_create
+      changed_when: calico_api_create.stdout is search('(?m) created$')
+      failed_when: >-
+        calico_api_create.rc != 0 and
+        (
+          calico_api_create.rc != 1 or
+          (calico_api_create.stderr_lines | length == 0) or
+          (
+            calico_api_create.stderr_lines
+            | reject('match', '^Error from server [(]AlreadyExists[)]:')
+            | list
+            | length > 0
+          )
+        )
 
     - name: Deploy Tigera Operator
       when: not ansible_check_mode
