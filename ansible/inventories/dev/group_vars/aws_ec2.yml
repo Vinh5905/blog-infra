@@ -16,3 +16,5 @@ kubernetes_cluster_name: "blogapp-dev"
 kubernetes_api_dns: "api.dev.blogapp.todicode.tech"
 kubernetes_api_port: 6443
 kubernetes_cri_socket: "unix:///run/containerd/containerd.sock"
+
+ansible_aws_ssm_timeout: 240
