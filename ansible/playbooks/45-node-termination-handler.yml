@@ -1,0 +1,113 @@
+---
+- name: Deploy the dev AWS Node Termination Handler
+  hosts: role_control_plane
+  become: true
+  gather_facts: false
+
+  vars:
+    nth_helm_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/blogapp-ops/tools/helm-v4.3.1"
+    nth_manifest_dir: /etc/kubernetes/addons/aws-node-termination-handler
+
+  tasks:
+    - name: Render the pinned chart on the automation host
+      delegate_to: localhost
+      become: false
+      block:
+        - name: Create the local Helm tools directory
+          ansible.builtin.file:
+            path: "{{ nth_helm_dir }}"
+            state: directory
+            mode: '0755'
+
+        - name: Download and verify the pinned Helm archive
+          ansible.builtin.get_url:
+            url: https://get.helm.sh/helm-v4.3.1-linux-amd64.tar.gz
+            dest: "{{ nth_helm_dir }}/helm.tar.gz"
+            checksum: "sha256:0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b"
+            mode: '0644'
+
+        - name: Extract Helm if needed
+          ansible.builtin.unarchive:
+            src: "{{ nth_helm_dir }}/helm.tar.gz"
+            dest: "{{ nth_helm_dir }}"
+            remote_src: true
+            creates: "{{ nth_helm_dir }}/linux-amd64/helm"
+
+        - name: Render the Node Termination Handler chart
+          ansible.builtin.command:
+            argv:
+              - "{{ nth_helm_dir }}/linux-amd64/helm"
+              - template
+              - aws-node-termination-handler
+              - oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler
+              - --version
+              - "0.27.6"
+              - --namespace
+              - kube-system
+              - --kube-version
+              - "{{ kubernetes_version }}"
+              - -f
+              - "{{ playbook_dir }}/../files/aws-node-termination-handler-values.yml"
+          register: nth_render
+          changed_when: false
+
+    - name: Create the manifest directory on the control plane
+      ansible.builtin.file:
+        path: "{{ nth_manifest_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy the rendered chart to the control plane
+      ansible.builtin.copy:
+        content: "{{ nth_render.stdout }}"
+        dest: "{{ nth_manifest_dir }}/base.yml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Copy the AWS web identity patch
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/aws-node-termination-handler-web-identity.yml"
+        dest: "{{ nth_manifest_dir }}/web-identity.yml"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Configure Kustomize to merge the chart and patch
+      ansible.builtin.copy:
+        dest: "{{ nth_manifest_dir }}/kustomization.yaml"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          apiVersion: kustomize.config.k8s.io/v1beta1
+          kind: Kustomization
+          resources:
+            - base.yml
+          patches:
+            - path: web-identity.yml
+
+    - name: Validate the merged manifest with the Kubernetes API
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf
+          apply --dry-run=server -k {{ nth_manifest_dir }}
+      changed_when: false
+
+    - name: Apply the Node Termination Handler manifests
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf
+          apply -k {{ nth_manifest_dir }}
+      register: nth_apply
+      changed_when: nth_apply.stdout is search('(?m) (created|configured)$')
+
+    - name: Wait for the Node Termination Handler rollout
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/kubectl --kubeconfig=/etc/kubernetes/admin.conf
+          -n kube-system rollout status deployment/aws-node-termination-handler
+          --timeout=120s
+      changed_when: false
