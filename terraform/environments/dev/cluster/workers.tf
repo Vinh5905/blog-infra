@@ -65,7 +65,9 @@ module "workers" {
     }
   ]
 
-  autoscaling_group_tags = local.worker_tags
+  autoscaling_group_tags = merge(local.worker_tags, {
+    "aws-node-termination-handler/managed" = "true"
+  })
 }
 
 data "aws_ami" "worker" {
