@@ -1,0 +1,49 @@
+schemaVersion: '2.2'
+description: Bootstrap one BlogApp dev worker from the automation host.
+
+parameters:
+  WorkerInstanceId:
+    type: String
+    description: EC2 instance ID of the worker to bootstrap.
+    allowedPattern: '^i-[0-9a-f]{17}$'
+    interpolationType: ENV_VAR
+
+mainSteps:
+  - name: BootstrapWorker
+    action: aws:runShellScript
+    inputs:
+      workingDirectory: /home/ssm-user
+      timeoutSeconds: '1200'
+      runCommand:
+        - |-
+          set -eu
+          : "$${SSM_WorkerInstanceId:?WorkerInstanceId was not provided by SSM Agent}"
+
+          /usr/sbin/runuser -u ssm-user -- /bin/bash -s -- \
+            "$SSM_WorkerInstanceId" '${worker_bootstrap_commit}' <<'BOOTSTRAP'
+          set -euo pipefail
+
+          worker_id="$1"
+          revision="$2"
+          repo="/home/ssm-user/blogapp-ops/blog-infra"
+          venv="/home/ssm-user/blogapp-ops/.venv"
+
+          export PATH="$venv/bin:/usr/local/bin:/usr/bin:/bin"
+          export GIT_TERMINAL_PROMPT=0
+          test -x "$venv/bin/ansible-playbook"
+
+          if ! git -C "$repo" cat-file -e "$revision^{commit}" 2>/dev/null; then
+            git -C "$repo" fetch --no-tags origin main
+          fi
+
+          run_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$run_dir"' EXIT
+          git -C "$repo" archive "$revision" ansible | tar -xf - -C "$run_dir"
+
+          cd "$run_dir"
+          "$venv/bin/ansible-playbook" \
+            -i ansible/inventories/dev/aws_ec2.yml \
+            --limit "$worker_id" \
+            -e "worker_instance_id=$worker_id" \
+            ansible/playbooks/41-bootstrap-worker.yml
+          BOOTSTRAP

@@ -1,3 +1,14 @@
+locals {
+  worker_launch_template_version = "1"
+  worker_tags = {
+    Project                             = "blogapp"
+    Environment                         = "dev"
+    Role                                = "worker"
+    Cluster                             = "blogapp-dev"
+    "kubernetes.io/cluster/blogapp-dev" = "owned"
+  }
+}
+
 module "workers" {
   source  = "terraform-aws-modules/autoscaling/aws"
   version = "9.3.2"
@@ -11,7 +22,7 @@ module "workers" {
   ignore_desired_capacity_changes = true
   health_check_type               = "EC2"
 
-  launch_template_version   = "1"
+  launch_template_version   = local.worker_launch_template_version
   image_id                  = var.worker_ami_id
   instance_type             = var.worker_instance_type
   security_groups           = [local.foundation.security_group_ids.worker]
@@ -47,20 +58,14 @@ module "workers" {
 
   initial_lifecycle_hooks = [
     {
-      name                 = "blogapp-dev-worker-launch"
+      name                 = local.worker_launch_hook_name
       lifecycle_transition = "autoscaling:EC2_INSTANCE_LAUNCHING"
       heartbeat_timeout    = 900
       default_result       = "ABANDON"
     }
   ]
 
-  autoscaling_group_tags = {
-    Project     = "blogapp"
-    Environment = "dev"
-    Role        = "worker"
-    Cluster     = "blogapp-dev"
-    "kubernetes.io/cluster/blogapp-dev" = "owned"
-  }
+  autoscaling_group_tags = local.worker_tags
 }
 
 data "aws_ami" "worker" {

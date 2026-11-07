@@ -1,0 +1,258 @@
+schemaVersion: '0.3'
+description: Verify a BlogApp dev worker before bootstrap.
+assumeRole: '${automation_role_arn}'
+
+parameters:
+  InstanceId:
+    type: String
+    description: EC2 instance ID from the ASG launch event.
+    allowedPattern: '^i-[0-9a-f]{17}$'
+
+  LifecycleActionToken:
+    type: String
+    description: Token identifying the ASG launch lifecycle action.
+    allowedPattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+
+mainSteps:
+  - name: VerifyWorkerGroup
+    action: aws:assertAwsResourceProperty
+    onFailure: Abort
+    inputs:
+      Service: autoscaling
+      Api: DescribeAutoScalingInstances
+      InstanceIds:
+        - '{{ InstanceId }}'
+      PropertySelector: '$.AutoScalingInstances[0].AutoScalingGroupName'
+      DesiredValues:
+        - '${worker_asg_name}'
+
+  - name: VerifyWorkerLaunchTemplate
+    action: aws:assertAwsResourceProperty
+    onFailure: Abort
+    inputs:
+      Service: autoscaling
+      Api: DescribeAutoScalingInstances
+      InstanceIds:
+        - '{{ InstanceId }}'
+      PropertySelector: '$.AutoScalingInstances[0].LaunchTemplate.LaunchTemplateId'
+      DesiredValues:
+        - '${worker_launch_template_id}'
+
+  - name: VerifyWorkerLaunchTemplateVersion
+    action: aws:assertAwsResourceProperty
+    onFailure: Abort
+    inputs:
+      Service: autoscaling
+      Api: DescribeAutoScalingInstances
+      InstanceIds:
+        - '{{ InstanceId }}'
+      PropertySelector: '$.AutoScalingInstances[0].LaunchTemplate.Version'
+      DesiredValues:
+        - '${worker_launch_template_version}'
+
+  - name: VerifyWorkerTags
+    action: aws:assertAwsResourceProperty
+    onFailure: Abort
+    inputs:
+      Service: ec2
+      Api: DescribeInstances
+      InstanceIds:
+        - '{{ InstanceId }}'
+      Filters: ${worker_tag_filters}
+      PropertySelector: '$.Reservations[0].Instances[0].InstanceId'
+      DesiredValues:
+        - '{{ InstanceId }}'
+
+  - name: VerifyWorkerIsWaiting
+    action: aws:assertAwsResourceProperty
+    onFailure: Abort
+    inputs:
+      Service: autoscaling
+      Api: DescribeAutoScalingInstances
+      InstanceIds:
+        - '{{ InstanceId }}'
+      PropertySelector: '$.AutoScalingInstances[0].LifecycleState'
+      DesiredValues:
+        - 'Pending:Wait'
+
+  - name: PrepareLaunchLock
+    action: aws:executeScript
+    onFailure: Abort
+    inputs:
+      Runtime: python3.12
+      Handler: prepare_lock
+      InputPayload:
+        InstanceId: '{{ InstanceId }}'
+        LifecycleActionToken: '{{ LifecycleActionToken }}'
+      Script: |-
+        import hashlib
+        import time
+
+        def prepare_lock(events, context):
+            token_hash = hashlib.sha256(
+                events["LifecycleActionToken"].lower().encode("ascii")
+            ).hexdigest()
+            instance_id = events["InstanceId"]
+
+            return {
+                "LaunchKey": f"{instance_id}#{token_hash}",
+                "ExpiresAt": str(int(time.time()) + 72 * 60 * 60),
+            }
+    outputs:
+      - Name: LaunchKey
+        Selector: $.Payload.LaunchKey
+        Type: String
+      - Name: ExpiresAt
+        Selector: $.Payload.ExpiresAt
+        Type: String
+
+  - name: AcquireLaunchLock
+    action: aws:executeAwsApi
+    onFailure: Abort
+    inputs:
+      Service: dynamodb
+      Api: PutItem
+      TableName: '${worker_launch_lock_table_name}'
+      ConditionExpression: 'attribute_not_exists(LaunchKey) OR AutomationExecutionId = :owner'
+      ExpressionAttributeValues:
+        ':owner':
+          S: '{{ automation:EXECUTION_ID }}'
+      Item:
+        LaunchKey:
+          S: '{{ PrepareLaunchLock.LaunchKey }}'
+        AutomationExecutionId:
+          S: '{{ automation:EXECUTION_ID }}'
+        ExpiresAt:
+          N: '{{ PrepareLaunchLock.ExpiresAt }}'
+
+  - name: RecordLaunchHeartbeat
+    action: aws:executeAwsApi
+    onFailure: Abort
+    inputs:
+      Service: autoscaling
+      Api: RecordLifecycleActionHeartbeat
+      AutoScalingGroupName: '${worker_asg_name}'
+      LifecycleHookName: '${worker_launch_hook_name}'
+      LifecycleActionToken: '{{ LifecycleActionToken }}'
+
+  - name: WaitForWorkerSsmOnline
+    action: aws:waitForAwsResourceProperty
+    timeoutSeconds: 300
+    onFailure: Abort
+    inputs:
+      Service: ssm
+      Api: DescribeInstanceInformation
+      Filters:
+        - Key: InstanceIds
+          Values:
+            - '{{ InstanceId }}'
+      PropertySelector: '$.InstanceInformationList[0].PingStatus'
+      DesiredValues:
+        - Online
+
+  - name: SendWorkerBootstrapCommand
+    action: aws:executeAwsApi
+    onFailure: Abort
+    inputs:
+      Service: ssm
+      Api: SendCommand
+      DocumentName: '${bootstrap_document_name}'
+      DocumentVersion: '${bootstrap_document_version}'
+      InstanceIds:
+        - '${automation_instance_id}'
+      Parameters:
+        WorkerInstanceId:
+          - '{{ InstanceId }}'
+      TimeoutSeconds: 60
+    outputs:
+      - Name: CommandId
+        Selector: '$.Command.CommandId'
+        Type: String
+
+  - name: WaitForBootstrapCommand
+    action: aws:loop
+    onFailure: Abort
+    inputs:
+      MaxIterations: 25
+      LoopCondition:
+        Variable: '{{ PollBootstrapCommand.ShouldRetry }}'
+        BooleanEquals: true
+      Steps:
+        - name: PollBootstrapCommand
+          action: aws:executeScript
+          timeoutSeconds: 120
+          onFailure: Abort
+          inputs:
+            Runtime: python3.12
+            Handler: poll_command
+            InputPayload:
+              CommandId: '{{ SendWorkerBootstrapCommand.CommandId }}'
+              AutomationHostId: '${automation_instance_id}'
+              AutoScalingGroupName: '${worker_asg_name}'
+              LifecycleHookName: '${worker_launch_hook_name}'
+              LifecycleActionToken: '{{ LifecycleActionToken }}'
+            Script: |-
+              import boto3
+              import time
+
+              def poll_command(events, context):
+                  command_id = events["CommandId"]
+                  ssm = boto3.client("ssm")
+
+                  try:
+                      invocation = ssm.get_command_invocation(
+                          CommandId=command_id,
+                          InstanceId=events["AutomationHostId"],
+                          PluginName="BootstrapWorker",
+                      )
+                  except ssm.exceptions.InvocationDoesNotExist:
+                      pass
+                  else:
+                      status = invocation["Status"]
+                      exit_code = invocation["ResponseCode"]
+
+                      if status == "Success" and exit_code == 0:
+                          return {"ShouldRetry": False}
+
+                      if status not in {"Pending", "InProgress", "Delayed", "Cancelling"}:
+                          details = invocation.get("StatusDetails", status)
+                          raise RuntimeError(
+                              f"Bootstrap command {command_id}: {details} (exit {exit_code})"
+                          )
+
+                  autoscaling = boto3.client("autoscaling")
+                  autoscaling.record_lifecycle_action_heartbeat(
+                      AutoScalingGroupName=events["AutoScalingGroupName"],
+                      LifecycleHookName=events["LifecycleHookName"],
+                      LifecycleActionToken=events["LifecycleActionToken"],
+                  )
+                  time.sleep(60)
+                  return {"ShouldRetry": True}
+          outputs:
+            - Name: ShouldRetry
+              Selector: $.Payload.ShouldRetry
+              Type: Boolean
+
+  - name: VerifyBootstrapCommandSucceeded
+    action: aws:assertAwsResourceProperty
+    onFailure: Abort
+    inputs:
+      Service: ssm
+      Api: GetCommandInvocation
+      CommandId: '{{ SendWorkerBootstrapCommand.CommandId }}'
+      InstanceId: '${automation_instance_id}'
+      PluginName: BootstrapWorker
+      PropertySelector: '$.Status'
+      DesiredValues:
+        - Success
+
+  - name: CompleteWorkerLaunch
+    action: aws:executeAwsApi
+    onFailure: Abort
+    inputs:
+      Service: autoscaling
+      Api: CompleteLifecycleAction
+      AutoScalingGroupName: '${worker_asg_name}'
+      LifecycleHookName: '${worker_launch_hook_name}'
+      LifecycleActionToken: '{{ LifecycleActionToken }}'
+      LifecycleActionResult: CONTINUE

@@ -38,3 +38,13 @@ variable "worker_instance_type" {
   description = "EC2 instance type for BlogApp dev workers"
   type        = string
 }
+
+variable "worker_bootstrap_commit" {
+  description = "Full Git commit SHA containing the dev worker bootstrap playbook"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.worker_bootstrap_commit))
+    error_message = "worker_bootstrap_commit must be a full 40-character Git SHA."
+  }
+}
