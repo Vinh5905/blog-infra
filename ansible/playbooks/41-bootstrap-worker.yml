@@ -1,0 +1,22 @@
+---
+- name: Verify dev worker bootstrap target
+  hosts: all
+  gather_facts: false
+  any_errors_fatal: true
+
+  tasks:
+    - name: Require exactly the requested worker and one control plane in inventory
+      ansible.builtin.assert:
+        that:
+          - worker_instance_id | default('') is match('^i-[0-9a-f]{17}$')
+          - ansible_play_hosts_all == [worker_instance_id]
+          - worker_instance_id in groups.get('role_worker', [])
+          - groups.get('role_control_plane', []) | length == 1
+        fail_msg: >-
+          Expected --limit to select only the requested dev worker
+          and inventory to contain exactly one control plane.
+      run_once: true
+
+- ansible.builtin.import_playbook: 10-os-runtime.yml
+
+- ansible.builtin.import_playbook: 40-worker-join.yml
