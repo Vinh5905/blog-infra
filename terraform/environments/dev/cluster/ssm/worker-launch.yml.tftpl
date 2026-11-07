@@ -138,7 +138,8 @@ mainSteps:
   - name: WaitForWorkerSsmOnline
     action: aws:waitForAwsResourceProperty
     timeoutSeconds: 300
-    onFailure: Abort
+    isCritical: true
+    onFailure: 'step:AbandonWorkerLaunch'
     inputs:
       Service: ssm
       Api: DescribeInstanceInformation
@@ -249,6 +250,7 @@ mainSteps:
   - name: CompleteWorkerLaunch
     action: aws:executeAwsApi
     onFailure: Abort
+    isEnd: true
     inputs:
       Service: autoscaling
       Api: CompleteLifecycleAction
@@ -256,3 +258,15 @@ mainSteps:
       LifecycleHookName: '${worker_launch_hook_name}'
       LifecycleActionToken: '{{ LifecycleActionToken }}'
       LifecycleActionResult: CONTINUE
+
+  - name: AbandonWorkerLaunch
+    action: aws:executeAwsApi
+    onFailure: Abort
+    isEnd: true
+    inputs:
+      Service: autoscaling
+      Api: CompleteLifecycleAction
+      AutoScalingGroupName: '${worker_asg_name}'
+      LifecycleHookName: '${worker_launch_hook_name}'
+      LifecycleActionToken: '{{ LifecycleActionToken }}'
+      LifecycleActionResult: ABANDON
