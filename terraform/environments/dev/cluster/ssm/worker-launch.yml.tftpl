@@ -217,6 +217,16 @@ mainSteps:
 
                       if status not in {"Pending", "InProgress", "Delayed", "Cancelling"}:
                           details = invocation.get("StatusDetails", status)
+
+                          if status == "Failed" and exit_code not in {-1, 0}:
+                              autoscaling = boto3.client("autoscaling")
+                              autoscaling.complete_lifecycle_action(
+                                  AutoScalingGroupName=events["AutoScalingGroupName"],
+                                  LifecycleHookName=events["LifecycleHookName"],
+                                  LifecycleActionToken=events["LifecycleActionToken"],
+                                  LifecycleActionResult="ABANDON",
+                              )
+
                           raise RuntimeError(
                               f"Bootstrap command {command_id}: {details} (exit {exit_code})"
                           )
