@@ -1,0 +1,27 @@
+enableSqsTerminationDraining: true
+awsRegion: ap-southeast-1
+queueURL: https://sqs.ap-southeast-1.amazonaws.com/947856326077/blogapp-dev-worker-termination
+
+serviceAccount:
+  create: true
+  name: aws-node-termination-handler
+
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+useProviderId: true
+heartbeatInterval: 30
+heartbeatUntil: 600
+
+extraEnv:
+  - name: AWS_ROLE_ARN
+    value: arn:aws:iam::947856326077:role/blogapp-dev-node-termination-handler
+  - name: AWS_WEB_IDENTITY_TOKEN_FILE
+    value: /var/run/secrets/aws/token
+  - name: AWS_EC2_METADATA_DISABLED
+    value: "true"
