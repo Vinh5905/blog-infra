@@ -85,3 +85,23 @@ resource "aws_cloudwatch_event_target" "worker_launch_alerts" {
 
   depends_on = [aws_iam_role_policy.worker_launch_alerts_publish]
 }
+
+# ------------------------------------------------------------
+resource "aws_cloudwatch_metric_alarm" "worker_launch_repeated_failures" {
+  alarm_name        = "blogapp-dev-worker-launch-repeated-failures"
+  alarm_description = "At least 3 dev worker launch failure events in 15 minutes"
+
+  namespace   = "AWS/Events"
+  metric_name = "MatchedEvents"
+  statistic   = "Sum"
+
+  dimensions = {
+    RuleName = aws_cloudwatch_event_rule.worker_launch_failure.name
+  }
+
+  period              = 900
+  evaluation_periods  = 1
+  threshold           = 3
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+}

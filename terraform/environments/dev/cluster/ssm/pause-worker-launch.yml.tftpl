@@ -1,0 +1,23 @@
+schemaVersion: '0.3'
+description: Suspend new launches in the BlogApp dev worker ASG.
+assumeRole: '${automation_role_arn}'
+
+parameters:
+  Trigger:
+    type: String
+    description: Source that started this automation.
+    default: Manual
+    allowedValues:
+      - Manual
+      - CloudWatchAlarm
+
+mainSteps:
+  - name: SuspendWorkerLaunch
+    action: aws:executeAwsApi
+    onFailure: Abort
+    inputs:
+      Service: autoscaling
+      Api: SuspendProcesses
+      AutoScalingGroupName: '${worker_asg_name}'
+      ScalingProcesses:
+        - Launch
