@@ -34,3 +34,37 @@
           Chart {{ argocd_chart_version }} declares Argo CD {{ argocd_app_version }}.
       vars:
         argocd_chart_metadata: "{{ argocd_chart_info.stdout | from_yaml }}"
+
+    - name: Render the pinned Argo CD chart
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv:
+          - "{{ argocd_helm_bin }}"
+          - template
+          - argocd
+          - argo-cd
+          - --repo
+          - "{{ argocd_chart_repo }}"
+          - --version
+          - "{{ argocd_chart_version }}"
+          - --namespace
+          - argocd
+          - --kube-version
+          - "{{ kubernetes_version }}"
+          - --include-crds
+          - --values
+          - "{{ playbook_dir }}/../files/argocd-values.yml"
+      register: argocd_render
+      changed_when: false
+
+    - name: Display the Argo CD workloads and services
+      ansible.builtin.debug:
+        msg: "{{ item.kind }}/{{ item.metadata.name }}"
+      loop: >-
+        {{ argocd_render.stdout | from_yaml_all
+           | selectattr('kind', 'defined')
+           | selectattr('kind', 'in', ['Deployment', 'StatefulSet', 'Service'])
+           | list }}
+      loop_control:
+        label: "{{ item.metadata.name }}"
