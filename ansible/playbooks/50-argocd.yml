@@ -7,6 +7,7 @@
     argocd_helm_bin: >-
       {{ lookup('ansible.builtin.env', 'HOME') }}/blogapp-ops/tools/helm-v4.3.1/linux-amd64/helm
     argocd_chart_repo: https://argoproj.github.io/argo-helm
+    argocd_bootstrap_dir: /opt/blogapp/argocd-bootstrap
 
   tasks:
     - name: Read the pinned Argo CD chart metadata
@@ -38,6 +39,7 @@
     - name: Render the pinned Argo CD chart
       delegate_to: localhost
       become: false
+      when: not (argocd_install | default(false) | bool)
       ansible.builtin.command:
         argv:
           - "{{ argocd_helm_bin }}"
@@ -59,6 +61,7 @@
       changed_when: false
 
     - name: Display the Argo CD workloads and services
+      when: not (argocd_install | default(false) | bool)
       ansible.builtin.debug:
         msg: "{{ item.kind }}/{{ item.metadata.name }}"
       loop: >-
@@ -68,3 +71,77 @@
            | list }}
       loop_control:
         label: "{{ item.metadata.name }}"
+
+    - name: Prepare Argo CD installation files on the control plane
+      become: true
+      when: argocd_install | default(false) | bool
+      block:
+        - name: Read readiness of uncordoned worker nodes
+          ansible.builtin.command:
+            argv:
+              - /usr/bin/kubectl
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --request-timeout=10s
+              - get
+              - nodes
+              - "--selector=!node-role.kubernetes.io/control-plane"
+              - --field-selector=spec.unschedulable=false
+              - >-
+                --output=jsonpath={range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{" "}{end}
+          register: argocd_worker_readiness
+          changed_when: false
+
+        - name: Require a Ready worker before installing Argo CD
+          ansible.builtin.assert:
+            that:
+              - "'True' in argocd_worker_readiness.stdout.split()"
+            fail_msg: >-
+              No uncordoned worker is Ready. Scale up the dev worker ASG
+              and wait for a worker to join the cluster.
+
+        - name: Create the Argo CD bootstrap directory
+          ansible.builtin.file:
+            path: "{{ argocd_bootstrap_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Copy the pinned Helm binary to the control plane
+          ansible.builtin.copy:
+            src: "{{ argocd_helm_bin }}"
+            dest: "{{ argocd_bootstrap_dir }}/helm"
+            owner: root
+            group: root
+            mode: '0755'
+
+        - name: Copy the Argo CD values to the control plane
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/../files/argocd-values.yml"
+            dest: "{{ argocd_bootstrap_dir }}/values.yml"
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Install or upgrade the pinned Argo CD release
+          ansible.builtin.command:
+            argv:
+              - "{{ argocd_bootstrap_dir }}/helm"
+              - upgrade
+              - --install
+              - argocd
+              - argo-cd
+              - --repo
+              - "{{ argocd_chart_repo }}"
+              - --version
+              - "{{ argocd_chart_version }}"
+              - --namespace
+              - argocd
+              - --create-namespace
+              - --kubeconfig=/etc/kubernetes/admin.conf
+              - --values
+              - "{{ argocd_bootstrap_dir }}/values.yml"
+              - --wait=watcher
+              - --timeout=10m
+          async: 1200
+          poll: 15
