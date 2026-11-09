@@ -1,0 +1,36 @@
+---
+- name: Bootstrap Argo CD in the dev cluster
+  hosts: role_control_plane
+  gather_facts: false
+
+  vars:
+    argocd_helm_bin: >-
+      {{ lookup('ansible.builtin.env', 'HOME') }}/blogapp-ops/tools/helm-v4.3.1/linux-amd64/helm
+    argocd_chart_repo: https://argoproj.github.io/argo-helm
+
+  tasks:
+    - name: Read the pinned Argo CD chart metadata
+      delegate_to: localhost
+      become: false
+      ansible.builtin.command:
+        argv:
+          - "{{ argocd_helm_bin }}"
+          - show
+          - chart
+          - argo-cd
+          - --repo
+          - "{{ argocd_chart_repo }}"
+          - --version
+          - "{{ argocd_chart_version }}"
+      register: argocd_chart_info
+      changed_when: false
+
+    - name: Verify the pinned chart and Argo CD versions
+      ansible.builtin.assert:
+        that:
+          - argocd_chart_metadata.version == argocd_chart_version
+          - argocd_chart_metadata.appVersion == argocd_app_version
+        success_msg: >-
+          Chart {{ argocd_chart_version }} declares Argo CD {{ argocd_app_version }}.
+      vars:
+        argocd_chart_metadata: "{{ argocd_chart_info.stdout | from_yaml }}"

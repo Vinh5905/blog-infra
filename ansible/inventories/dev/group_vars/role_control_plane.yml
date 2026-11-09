@@ -14,3 +14,6 @@ calico_manifest_checksums:
 kubernetes_aws_ccm_version: "v1.36.2"
 kubernetes_aws_ccm_region: "ap-southeast-1"
 kubernetes_aws_ccm_role_arn: "arn:aws:iam::947856326077:role/blogapp-dev-ccm"
+
+argocd_chart_version: "10.17.1"
+argocd_app_version: "v3.6.1"
