@@ -4,3 +4,28 @@ server:
 
   ingress:
     enabled: false
+
+repoServer:
+  imagePullSecrets:
+    - name: argocd-cmp-ghcr
+
+  volumes:
+    - name: cmp-tmp
+      emptyDir: {}
+
+  extraContainers:
+    - name: blogapp-helm-sops
+      image: ghcr.io/vinh5905/blogapp-argocd-cmp@sha256:838fb578899563fd8ec719afda72144f26a6c3b623aa10d1ff7358ac7338564c
+      command:
+        - /var/run/argocd/argocd-cmp-server
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+      volumeMounts:
+        - name: var-files
+          mountPath: /var/run/argocd  
+        - name: plugins
+          mountPath: /home/argocd/cmp-server/plugins
+        - name: cmp-tmp
+          mountPath: /tmp
