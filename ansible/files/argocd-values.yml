@@ -12,6 +12,13 @@ repoServer:
   volumes:
     - name: cmp-tmp
       emptyDir: {}
+    - name: cmp-age
+      secret:
+        secretName: argocd-cmp-age
+        defaultMode: 292 # 0444, để UID 999 đọc được
+        items:
+          - key: keys.txt
+            path: keys.txt
 
   extraContainers:
     - name: blogapp-helm-sops
@@ -29,3 +36,9 @@ repoServer:
           mountPath: /home/argocd/cmp-server/plugins
         - name: cmp-tmp
           mountPath: /tmp
+        - name: cmp-age
+          mountPath: /var/run/sops-age
+          readOnly: true
+      env:
+        - name: SOPS_AGE_KEY_FILE
+          value: /var/run/sops-age/keys.txt
