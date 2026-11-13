@@ -1,6 +1,6 @@
 # Terraform — Từ AWS trống đến nền tảng dev của BlogApp
 
-Đọc [README](README.md) trước. **Các block HCL trong chương là ví dụ giải thích, chưa phải bộ code hoàn chỉnh để apply.** Biến, outputs, policy và liên kết state cần được triển khai thành file trong repo ở chặng tương ứng. Chưa có lệnh nào trong chương được chạy vào AWS.
+Đọc [README](README.md) và [tiến độ dev](tien-do-dev.md) trước. **Các block HCL trong chương là ví dụ thiết kế.** Implementation đã có ở `bootstrap/state/` và `terraform/environments/dev/{foundation,cluster}/`; người vận hành đã gửi kết quả apply. Khi thao tác, dùng các file `.tf`, biến, lockfile và plan mới của checkout hiện tại. Phần ví dụ trong chương không phải nhật ký mọi lệnh đã chạy.
 
 ## 1. Hiểu đúng module Registry
 
@@ -110,12 +110,12 @@ Trước tạo tài nguyên: đặt budget/cảnh báo, kiểm EC2 vCPU quota, s
 
 ## 3. D1 — Tạo repo và quy ước bảo vệ dữ liệu
 
-Khi bắt đầu code, từ thư mục cha dự định chứa hai repo:
+Môi trường đang tiếp tục đã có blog-infra và blog-gitops. Các lệnh tạo repo trong mục này phục vụ lần dựng mới; bỏ qua với checkout hiện tại. Khi dựng mới, từ thư mục cha dự định chứa hai repo:
 
 ```bash
-mkdir blogapp-infra blogapp-gitops
-git -C blogapp-infra init -b main
-git -C blogapp-gitops init -b main
+mkdir blog-infra blog-gitops
+git -C blog-infra init -b main
+git -C blog-gitops init -b main
 ```
 
 `mkdir` tạo hai checkout; `git -C` chạy Git tại thư mục được chỉ định mà không phải đổi shell directory. Chưa cần chạy `git init` trong source repo đã có.
@@ -123,8 +123,8 @@ git -C blogapp-gitops init -b main
 Sau khi có README, `.gitignore`, cấu trúc và commit ban đầu, có thể tạo remote bằng GitHub CLI đã đăng nhập đúng owner:
 
 ```bash
-gh repo create Vinh5905/blogapp-infra --private --source=blogapp-infra --remote=origin --push
-gh repo create Vinh5905/blogapp-gitops --private --source=blogapp-gitops --remote=origin --push
+gh repo create Vinh5905/blog-infra --private --source=blog-infra --remote=origin --push
+gh repo create Vinh5905/blog-gitops --private --source=blog-gitops --remote=origin --push
 ```
 
 Hai lệnh này **tạo remote và push thật**, chỉ thực hiện ở chặng implementation. Thay owner nếu khác. Bật PR protection/required checks theo tính năng tài khoản; không tuyên bố đã enforce khi chưa thử một PR bị chặn.

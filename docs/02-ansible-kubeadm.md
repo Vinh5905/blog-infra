@@ -1,6 +1,6 @@
 # Ansible và kubeadm — Từ EC2 đến cluster có worker lifecycle
 
-Phụ thuộc: foundation/cluster root đã tạo tài nguyên như [01-terraform.md](01-terraform.md). Các tên role/playbook sau là **thiết kế cần hiện thực**, chưa có file triển khai. Lệnh chỉ chạy sau khi đã viết file tương ứng và khóa version.
+Phụ thuộc foundation/cluster root như [01-terraform.md](01-terraform.md). Cập nhật hồ sơ 13/11/2026, implementation hiện có các playbook `10`, `20`, `25`, `30`, `40`, `41`, `45` và `50`. Chương giữ mô tả thiết kế, còn đường dẫn chạy thật và kết quả đã nhận nằm trong [tiến độ dev](tien-do-dev.md). Đối chiếu file trong `ansible/` trước khi dùng ví dụ role hoặc playbook chưa có.
 
 ## 1. Ansible làm gì trong dự án này?
 

@@ -1,6 +1,6 @@
 # Nghiệm thu dev, xử lý lỗi và vận hành
 
-Chương này là checklist thực hành sau khi implementation và deploy. **Tất cả ô nghiệm thu hiện để trống** vì chưa chạy AWS/Kubernetes trong lần soạn tài liệu. Lệnh tác động tới workload như promote, revert, drain hay teardown chỉ dùng ở bài tập/chặng tương ứng.
+Chương này là checklist nghiệm thu đầy đủ sau implementation và deploy. Các ô bên dưới giữ trạng thái của checklist tổng thể; kết quả bootstrap, launch/termination, OIDC và Argo CD đã nhận được ghi riêng tại [tiến độ dev](tien-do-dev.md). Phần app, observability, backup/restore còn cần bằng chứng trước khi tick nghiệm thu toàn môi trường.
 
 ## 1. Ghi evidence thế nào?
 

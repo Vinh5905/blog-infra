@@ -2,7 +2,7 @@
 
 Repository hạ tầng AWS và bootstrap Kubernetes cho BlogApp, hướng tới môi trường dev dùng **kubeadm trên EC2**.
 
-Hiện trạng ngày **02/11/2026**: repo đã có bộ tài liệu thiết kế và bài thực hành trong `docs/`; chưa có implementation Terraform/Ansible ở gốc repo. Việc nhập tài liệu không xác nhận tài nguyên AWS hay cluster đang hoạt động.
+Cập nhật hồ sơ ngày **13/11/2026**. Repo đã có Terraform bootstrap/foundation/cluster và Ansible tới playbook `50-argocd.yml`. Người vận hành đã gửi kết quả apply, worker tự join/drain, cảnh báo launch và Argo CD chạy trên worker. GitOps đang bắt đầu viết cấu hình; CMP, platform và ứng dụng còn các bước tiếp theo. Xem [tiến độ và điểm tiếp tục](docs/tien-do-dev.md) để phân biệt code, bằng chứng đã nhận và việc cần kiểm tra lại.
 
 ## Tài liệu và thứ tự đọc
 
@@ -20,9 +20,9 @@ Các tài liệu bổ trợ và code mẫu được giữ cùng trong `docs/`: [
 |---|---|
 | `blog_app_microservices` | Mã ứng dụng, CI, build/scan/sign image và xuất release candidate. |
 | `blog-infra` — repo này | Terraform tạo tài nguyên AWS; Ansible quản OS, containerd, kubeadm, Calico/CCM; bootstrap Argo CD/CMP và worker lifecycle. |
-| `blogapp-gitops` — repo dự kiến theo thiết kế | Helm charts/values, image digest được chọn, secret SOPS, platform Applications, dashboards và alerts do Argo CD đồng bộ. |
+| `blog-gitops` — https://github.com/Vinh5905/blog-gitops | Helm charts/values, image digest được chọn, secret SOPS, platform Applications, dashboards và alerts do Argo CD đồng bộ. |
 
-Tài liệu gốc dùng tên dự kiến `blogapp-infra`; trong workspace hiện tại, tên đó tương ứng với **repo `blog-infra` này**. Các đường dẫn checkout cũ trong bài thực hành cần đổi sang checkout hiện tại trước khi dùng lệnh. Những đoạn nói “chưa tạo repo” ghi lại trạng thái khi biên soạn, không phải yêu cầu tạo thêm một repo infra.
+Tài liệu gốc dùng tên dự kiến `blogapp-infra` và `blogapp-gitops`; tên thực tế hiện nay là **`blog-infra`** và **`blog-gitops`**. Các đường dẫn checkout cũ trong bài thực hành cần đổi sang checkout hiện tại trước khi dùng lệnh. Những đoạn nói “chưa tạo repo” ghi lại trạng thái khi biên soạn, không phải yêu cầu tạo thêm một repo infra.
 
 ## Quy trình triển khai dự kiến
 

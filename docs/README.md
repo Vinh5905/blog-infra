@@ -8,7 +8,7 @@ Ngày đối chiếu: **18/10/2026**. Ngôn ngữ hướng dẫn: tiếng Việt
 
 Bộ tài liệu này cụ thể hóa thiết kế trong `blog_app_microservices/docs/Kien-truc-DevOps-BlogApp copy.md`, đối chiếu mã nguồn tại commit `2ea267fe642725956d7c6e0d00b848db43d8c4fc` và sơ đồ BlogApp DevOps Architecture bạn cung cấp. Bạn đã xác nhận đây đúng là tài liệu kiến trúc cần dùng.
 
-**Chưa triển khai môi trường AWS.** Bộ thiết kế ban đầu là tài liệu; hiện có thêm bài thực hành Terraform theo từng chặng và bản thực hành thủ công kèm code đầy đủ. Chưa tạo repository GitHub hoặc provision AWS từ chat này. Các kiểm tra cục bộ được ghi riêng, không phải bằng chứng môi trường đã hoạt động.
+**Cập nhật hồ sơ 13/11/2026.** Terraform, Ansible, worker lifecycle và Argo CD cơ bản đã được hiện thực trong `blog-infra`. Người vận hành đã gửi bằng chứng môi trường hoạt động. Trạng thái từng phần và điểm tiếp tục nằm trong [tiến độ dev](tien-do-dev.md). Lần rà này đọc code và kết quả cũ trong chat, chưa kiểm tra trực tiếp AWS ngày 13/11.
 
 Trong các chương kiến trúc tổng quát 01–04, nhiều tên file `.tf`, playbook và Helm chart là **thiết kế cần hiện thực**; không coi các trích đoạn là một repo đã hoàn chỉnh. Các bài thực hành bổ sung ghi rõ code mẫu có sẵn và lệnh sử dụng; bản thủ công dưới đây cung cấp đủ các file cho luồng lab đã chọn.
 
@@ -63,7 +63,7 @@ Không có bản chép đầy đủ lịch sử chat “Thiết kế kiến trú
 | Metrics security | Business security config chỉ permit health; request khác cần authentication | Kiểm tra thực tế scrape 9090; không coi có dependency là Prometheus đã scrape được |
 | Tracing | Dockerfile được đọc chưa có Java agent | Cần source/image PR hoặc init container đã pin; đặt OTEL env một mình chưa tạo trace |
 | CI remote | Có các đợt test ghi trong changelog; local branch ahead một commit | Kiểm tra trusted main release thực tế trước deploy; không coi local commit đã lên main |
-| Kubernetes/AWS | Chưa có implementation infra/GitOps hoàn chỉnh trong tree đã đọc | Các mốc dưới đây đều là việc cần làm |
+| Kubernetes/AWS | Ghi nhận lúc audit source 18/10; implementation hiện tại đã tiến tới Argo CD cơ bản | Đọc [tiến độ dev](tien-do-dev.md) trước khi chọn mốc tiếp theo |
 
 `NEXT-STEPS.md` ghi ngày 20/09/2026 vẫn nói frontend chưa có test và chưa rời CRA. Nội dung đó đã bị các thay đổi mới hơn vượt qua. Changelog mới và source hiện tại là căn cứ tốt hơn cho phần này.
 
@@ -114,20 +114,20 @@ Chưa chốt EC2 size và giá tiền cố định. Bắt đầu đánh giá con
 
 **Có.** Source repo tạo image, infrastructure repo tạo nền tảng, GitOps repo mô tả cái đang được phép chạy trong cluster. Tách như vậy giúp đổi digest ứng dụng không chạy lại Terraform, và CI ứng dụng không cần kubeconfig admin.
 
-Ba tên repo đề xuất:
+Ba repo theo tên thực tế:
 
 ```text
-blog_app_microservices/       # Đã có: source và CI
-blogapp-infra/               # Sẽ tạo khi bắt đầu implementation
-blogapp-gitops/              # Sẽ tạo cùng quá trình bootstrap dev
+blog_app_microservices/       # Source và CI; chưa audit lại ở lần bàn giao
+blog-infra/                  # Terraform/Ansible đã có tới Argo CD cơ bản
+blog-gitops/                 # Đã tạo, public; checkout hiện chỉ có README
 ```
 
-Lệnh tạo repo sẽ nằm trong các chương thực hành. Chưa tạo repository thật ở giai đoạn này, theo yêu cầu “chưa cần code”. Dùng repo private cho infra/GitOps nếu cấu hình chứa thông tin nội bộ; dù private cũng chỉ commit secret đã mã hóa.
+Infra và GitOps đã có remote; bỏ qua các ví dụ tạo repo nếu tiếp tục môi trường này. Trạng thái commit và phần còn chờ nằm trong [tiến độ dev](tien-do-dev.md).
 
-Cấu trúc dự kiến:
+Cấu trúc đích bên dưới vẫn có các mục chưa hiện thực như versions.yaml, roles và evidence. Runbook đang có thực tế nằm tại docs/runbooks/; version được pin trong code và requirements.
 
 ```text
-blogapp-infra/
+blog-infra/
   README.md
   versions.yaml                 # Bảng phiên bản người đọc được
   bootstrap/state/              # Root riêng, ban đầu local state
@@ -145,7 +145,7 @@ blogapp-infra/
   evidence/dev/                 # Chỉ evidence đã redact; không state/secret
   .github/workflows/
 
-blogapp-gitops/
+blog-gitops/
   bootstrap/dev/                # Argo bootstrap và root application
   projects/                    # AppProject platform/app tách quyền
   platform/
@@ -177,7 +177,7 @@ Foundation và cluster dùng **hai state key**, không phải hai workspace dùn
 | Argo CD ban đầu | Bootstrap Ansible/Helm | Bản đầu giữ infra sở hữu release Argo CD; Argo chưa tự quản chính nó |
 | Cấu hình CMP của repo-server | Cùng chủ sở hữu Argo CD bootstrap | GitOps app không được tự sửa pod giải mã |
 | Controllers platform sau bootstrap, app, policy, dashboards | Argo CD | Không chạy Helm upgrade tay cùng release đang do Argo quản |
-| `desired_capacity` của ASG sau bootstrap | Cluster Autoscaler | Terraform bỏ qua desired theo API module hỗ trợ |
+| `desired_capacity` của ASG sau bootstrap | Operator hiện tại; Cluster Autoscaler khi được triển khai | Terraform bỏ qua desired theo API module hỗ trợ |
 | Selector active/preview | Argo Rollouts | Argo CD không giành lại trường hash |
 | Replicas khi bật HPA | HPA | Chart/Argo cần tránh ghi đè liên tục |
 
@@ -236,7 +236,9 @@ Các link Ceph, Oracle, Palo Alto, Jenkins và Splunk chưa được audit sâu 
 
 Tên miền `example.com`, account `111122223333`, `ami-...`, chuỗi `<...>` trong tài liệu là ví dụ; không phải dữ liệu account của bạn. Các giá trị đó phải được thay trước thực hiện.
 
-## 10. Trạng thái cuối lần soạn tài liệu
+## 10. Trạng thái lịch sử lúc soạn ngày 18/10/2026
+
+Các ghi nhận dưới đây thuộc lần biên soạn ban đầu. Tiến độ triển khai hiện tại được cập nhật tại [tiến độ dev](tien-do-dev.md).
 
 - Đã đối chiếu source và kiến trúc, chọn ranh giới repo và viết trình tự triển khai.
 - Đã đọc Registry metadata để xác nhận các version module trong chương Terraform và đọc tài liệu chính thức liên quan.

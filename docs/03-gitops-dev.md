@@ -1,6 +1,6 @@
 # GitOps — Từ cluster dev đến BlogApp được phát hành và quan sát được
 
-Phụ thuộc: [Terraform](01-terraform.md), [Ansible/kubeadm](02-ansible-kubeadm.md), một CI candidate đáng tin cậy có đủ năm image. Các file/commands sau là hướng dẫn implementation tương lai; **chưa có chart, plugin image, migration image hay Application thực tế được tạo trong lần này**.
+Phụ thuộc [Terraform](01-terraform.md) và [Ansible/kubeadm](02-ansible-kubeadm.md). Argo CD cơ bản đã cài bằng playbook `50`, chart `10.17.1`, app `v3.6.1`; người vận hành xác nhận kết nối repo `https://github.com/Vinh5905/blog-gitops.git` thành công qua UI. Repo GitOps hiện chỉ có README trong lần rà 13/11/2026. CMP, platform, migration và các Application ở dưới vẫn là thiết kế cần thực hiện. CI candidate đủ năm image là đầu vào trước khi triển khai app. Xem [tiến độ dev](tien-do-dev.md).
 
 ## 1. Phải làm thêm gì ngoài infrastructure repo?
 
@@ -9,8 +9,8 @@ Infrastructure chỉ đủ tạo cluster và tài nguyên. Để dev đúng ki�
 | Việc | Repo sở hữu |
 |---|---|
 | Thêm gateway Prometheus, quyền scrape, trace agent, migration images | `blog_app_microservices` bằng PR riêng |
-| AWS resources, node OS, identity, lifecycle, Argo/CMP bootstrap | `blogapp-infra` |
-| Helm app, platform values, release digest, SOPS encrypted values, dashboards/rules | `blogapp-gitops` |
+| AWS resources, node OS, identity, lifecycle, Argo/CMP bootstrap | `blog-infra` |
+| Helm app, platform values, release digest, SOPS encrypted values, dashboards/rules | `blog-gitops` |
 | Bot tạo GitOps PR từ verified candidate | CI source + quyền GitHub App hạn chế |
 
 Không nhét sửa Java vào infrastructure repo. Nếu chưa thực hiện source PR cần thiết, ghi rõ gate tương ứng chưa đạt, không dùng ConfigMap để giả vờ dependency/agent đã tồn tại.
@@ -18,6 +18,8 @@ Không nhét sửa Java vào infrastructure repo. Nếu chưa thực hiện sour
 ## 2. D7 — Bootstrap Argo CD
 
 ### 2.1 Cài từ version pin bằng đường private
+
+Implementation hiện tại thuộc `blog-infra/ansible/playbooks/50-argocd.yml` và `ansible/files/argocd-values.yml`. Chạy mặc định để kiểm tra/render trên automation host; truyền `-e argocd_install=true` để kiểm tra worker và cài/nâng cấp release từ control plane bằng `admin.conf`. Helm được copy từ automation host, còn các Pod Argo CD do scheduler đặt trên worker. Phần CMP bên dưới còn cần bổ sung vào bootstrap này. Khối lệnh Helm tiếp theo mô tả thiết kế ban đầu; dùng playbook hiện tại cho release đang triển khai.
 
 Thực hiện trên automation host hoặc Mac đã có private API tunnel và kubeconfig đúng dev. Đọc version từ lock đã review, không dùng `stable` manifest trôi nổi:
 
@@ -67,7 +69,7 @@ metadata:
   namespace: argocd
 spec:
   sourceRepos:
-    - https://github.com/Vinh5905/blogapp-gitops.git
+    - https://github.com/Vinh5905/blog-gitops.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: blogapp-dev
@@ -406,7 +408,7 @@ metadata:
 spec:
   project: blogapp-dev
   source:
-    repoURL: https://github.com/Vinh5905/blogapp-gitops.git
+    repoURL: https://github.com/Vinh5905/blog-gitops.git
     targetRevision: main
     path: charts/blogapp
     helm:

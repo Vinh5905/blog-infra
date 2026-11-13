@@ -2,6 +2,10 @@
 
 Áp dụng cho EC2 automation Ubuntu 24.04 amd64 ở `ap-southeast-1`. Máy cần hiện `Online` trong Systems Manager.
 
+Cập nhật hồ sơ 13/11/2026. Terraform hiện truyền `scripts/bootstrap-automation.sh` vào user data để cài AWS CLI, Session Manager plugin, `unzip`, `python3-venv` và tạo venv `/opt/blogapp-ops/.venv` cho máy tạo mới. Phiên máy đã kiểm chứng trong chat vẫn chạy repo và venv tại `/home/ssm-user/blogapp-ops/`; SSM Command bootstrap worker cũng đang trỏ cố định tới đó. Với máy mới, cần chuẩn bị checkout, venv và dependency ở đường dẫn mà Command document dùng trước khi bật ASG. User data hiện chưa tự clone repo hoặc cài các dependency Ansible.
+
+Các lệnh cài thủ công dưới đây dành cho máy cần bổ sung công cụ. Kiểm tra `aws --version`, `session-manager-plugin --version` và đường dẫn venv trước khi chạy lại.
+
 ## Mở phiên SSM từ Mac
 
 Chạy trong root `terraform/environments/dev/cluster`:

@@ -72,7 +72,7 @@ curl --fail --show-error --silent \
 
 Kết quả cần là JSON; issuer và jwks_uri phải đúng hostname public, JWKS chứa public key. Object được upload với `Content-Type: application/json`, `Cache-Control: public,max-age=300`; CloudFront có thể còn giữ bản cache cũ trong lúc cập nhật.
 
-Hạ tầng issuer và publish tài liệu là bước chuẩn bị. IAM OIDC provider, workload role và CCM được triển khai ở các bước tiếp theo.
+Trong trình tự bootstrap mới, publish tài liệu phải xong trước IAM OIDC provider và CCM. Với môi trường đã thực hành trong chat, provider, role CCM và role Node Termination Handler đã được tạo, CCM/NTH đã chạy. Xem [tiến độ dev](../tien-do-dev.md) để chọn bước tiếp tục.
 
 ## Hình minh họa
 
