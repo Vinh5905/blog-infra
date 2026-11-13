@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+umask 077
+
+work_dir=$(mktemp -d)
+trap 'rm -rf "$work_dir"' EXIT
+trap 'exit 1' HUP INT TERM
+
+sops decrypt --input-type yaml --output-type yaml \
+  secrets.enc.yaml > "$work_dir/secrets.values.yaml"
+
+helm template blogapp ../../charts/blogapp \
+  --namespace blogapp-dev \
+  -f values.yaml \
+  -f "$work_dir/secrets.values.yaml" \
+  --set chartMode=config

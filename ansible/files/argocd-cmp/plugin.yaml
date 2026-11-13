@@ -1,0 +1,9 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ConfigManagementPlugin
+metadata:
+  name: blogapp-helm-sops
+spec:
+  version: v1
+  generate:
+    command:
+      - /usr/local/bin/render-blogapp
